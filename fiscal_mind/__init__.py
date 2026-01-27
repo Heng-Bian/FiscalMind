@@ -3,7 +3,7 @@ FiscalMind - 面向财务BP的表格分析Agent
 A table analysis agent for financial business partners.
 """
 
-__version__ = "3.0.0"
+__version__ = "2.3.0"
 
 # 导出主要类
 from fiscal_mind.parser import ExcelParser, ExcelDocument

@@ -10,7 +10,7 @@ PRR架构包含三个核心组件:
 这种架构特别适合回答复杂的财务分析问题，如"哪个大区今年表现更好"。
 """
 
-from typing import TypedDict, Annotated, List, Dict, Any, Optional
+from typing import TypedDict, Annotated, List, Dict, Any, Optional, Tuple
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 import operator
@@ -364,7 +364,7 @@ class PRRAgent:
         }
     
     def _reason_and_act(self, step_description: str, query: str, 
-                       context: str, observations: List[Dict]) -> tuple[str, Optional[Dict[str, Any]]]:
+                       context: str, observations: List[Dict]) -> Tuple[str, Optional[Dict[str, Any]]]:
         """
         推理并决定行动
         
