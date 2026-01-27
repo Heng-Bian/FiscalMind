@@ -746,10 +746,28 @@ class PRRAgent:
                 docs = result["data"]["documents"]
                 # 遍历文档和工作表
                 for doc_name, doc_info in docs.items():
-                    sheets = doc_info.get("sheets", {})
+                    # 尝试从sheets_summary中获取
+                    sheets = doc_info.get("sheets_summary", doc_info.get("sheets", {}))
                     for sheet_name, sheet_info in sheets.items():
-                        # 检查列名
-                        columns = sheet_info.get("columns", [])
+                        # 检查列名 - 可能是column_names或columns
+                        columns = sheet_info.get("column_names", sheet_info.get("columns", []))
+                        # 检查是否有任何关键词匹配
+                        for keyword in keywords:
+                            if any(keyword in str(col) for col in columns):
+                                # 优先匹配更精确的关键词（如"大区"比"销售"更精确）
+                                if keyword in ['区域', '大区', '产品', '部门']:
+                                    # 这些是高优先级的分组关键词
+                                    return doc_name, sheet_name
+        
+        # 第二轮：如果没找到高优先级关键词，接受其他匹配
+        for obs in observations:
+            result = obs.get("result", {})
+            if result.get("success") and "documents" in result.get("data", {}):
+                docs = result["data"]["documents"]
+                for doc_name, doc_info in docs.items():
+                    sheets = doc_info.get("sheets_summary", doc_info.get("sheets", {}))
+                    for sheet_name, sheet_info in sheets.items():
+                        columns = sheet_info.get("column_names", sheet_info.get("columns", []))
                         for keyword in keywords:
                             if any(keyword in str(col) for col in columns):
                                 return doc_name, sheet_name
@@ -858,3 +876,12 @@ class PRRAgent:
         
         # 返回最终答案
         return final_state.get("final_answer", "无法生成响应")
+    
+    def get_document_summary(self) -> str:
+        """
+        获取所有已加载文档的摘要
+        
+        Returns:
+            文档摘要文本
+        """
+        return TableMetaFunctions.create_data_context(self.parser)
