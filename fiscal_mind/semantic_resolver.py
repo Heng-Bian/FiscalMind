@@ -31,7 +31,7 @@ class SemanticResolver:
         '价格': ['价格', '单价', '金额', '售价', 'price'],
         '部门': ['部门', '科室', '组织', '单位', 'department', 'division'],
         '员工': ['员工', '人员', '职工', '工作人员', 'employee', 'staff'],
-        '工资': ['工资', '薪资', '薪酬', '报酬', '薪水', 'salary', 'wage'],
+        '工资': ['工资', '薪资', '薪酬', '报酬', '薪水', '月薪', '年薪', '薪', 'salary', 'wage', 'pay'],
         '编号': ['编号', 'ID', 'id', '工号', '员工编号', '代码', 'code', 'number'],
         '名称': ['名称', '名字', '姓名', 'name'],
         '地址': ['地址', '地点', '位置', 'address', 'location'],
@@ -42,6 +42,9 @@ class SemanticResolver:
         '产品': ['产品', '商品', '货物', 'product', 'goods'],
         '类别': ['类别', '类型', '种类', '分类', 'category', 'type'],
         '状态': ['状态', '情况', 'status', 'state'],
+        '报销': ['报销', '报销单', '费用报销', 'reimbursement', 'expense claim'],
+        '报表': ['报表', '报告', '财务报表', 'report', 'financial report', 'statement'],
+        '预算': ['预算', '预算表', 'budget'],
     }
     
     # 常见的地名标准化映射
@@ -159,15 +162,33 @@ class SemanticResolver:
         if not candidates:
             for sheet in sheet_names:
                 ratio = SequenceMatcher(None, query_lower, sheet.lower()).ratio()
-                if ratio >= 0.6:
+                if ratio >= 0.5:  # Lowered threshold
                     candidates.append((sheet, ratio))
         
-        # Step 4: 关键词匹配（财务场景）
+        # Step 4: 关键词匹配（财务场景）+ 同义词匹配
         if not candidates:
             keywords = self._extract_keywords(query_lower)
             for sheet in sheet_names:
                 sheet_lower = sheet.lower()
-                match_count = sum(1 for kw in keywords if kw in sheet_lower)
+                match_count = 0
+                for kw in keywords:
+                    # Check direct match or if keyword appears in sheet
+                    if kw in sheet_lower:
+                        match_count += 1
+                    # Also check for partial year matches (e.g., '24' in '2024' or 'FY24')
+                    elif kw.isdigit() and len(kw) == 2:
+                        # Check if this 2-digit year appears in a 4-digit year
+                        full_year = '20' + kw
+                        if full_year in sheet_lower:
+                            match_count += 1
+                        # Also check for patterns like 'FY24', 'fy24'
+                        if 'fy' + kw in sheet_lower or 'FY' + kw in sheet:
+                            match_count += 1
+                    else:
+                        # Check if keyword is a synonym of something in sheet
+                        if self._check_synonym_in_text(kw, sheet_lower):
+                            match_count += 1
+                
                 if match_count > 0:
                     score = match_count / len(keywords) if keywords else 0
                     candidates.append((sheet, score))
@@ -457,6 +478,22 @@ Return ONLY the tuple, no explanation."""
         
         return False
     
+    def _check_synonym_in_text(self, keyword: str, text: str) -> bool:
+        """检查关键词的同义词是否出现在文本中"""
+        keyword_lower = keyword.lower().strip()
+        text_lower = text.lower().strip()
+        
+        # Check if the keyword itself is in any synonym group
+        for key, synonyms in self.SYNONYM_MAP.items():
+            synonyms_lower = [s.lower() for s in synonyms]
+            if keyword_lower in synonyms_lower:
+                # Check if any synonym appears in the text
+                for syn in synonyms_lower:
+                    if syn in text_lower:
+                        return True
+        
+        return False
+    
     def _compatible_types(self, dtype1, dtype2) -> bool:
         """检查两个数据类型是否兼容（可以关联）"""
         # Numeric types are compatible
@@ -487,14 +524,48 @@ Return ONLY the tuple, no explanation."""
     
     def _extract_keywords(self, text: str) -> List[str]:
         """从文本中提取关键词"""
-        # Simple keyword extraction
         import re
         
         # Remove common words
-        common_words = {'的', '是', '在', '和', '与', 'the', 'a', 'an', 'and', 'or', 'of'}
+        common_words = {'的', '是', '在', '和', '与', '了', '这', '那', '有', '一', '个', '年',
+                       'the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at'}
         
-        # Extract alphanumeric sequences
-        words = re.findall(r'\w+', text.lower())
-        keywords = [w for w in words if w not in common_words and len(w) > 1]
+        keywords = []
         
-        return keywords
+        # Extract numbers (including years like '24', '2024')
+        numbers = re.findall(r'\d+', text)
+        keywords.extend(numbers)
+        
+        # Extract Chinese characters (split by common words)
+        # First remove common words
+        text_cleaned = text
+        for word in ['的', '是', '在', '和', '与', '了', '这', '那', '年']:
+            text_cleaned = text_cleaned.replace(word, ' ')
+        
+        # Extract Chinese word sequences
+        chinese_words = re.findall(r'[\u4e00-\u9fff]+', text_cleaned)
+        keywords.extend(chinese_words)
+        
+        # For Chinese words, also try to extract known domain terms
+        # This helps match things like '员工工资' to '员工' and '工资'
+        for chinese_word in chinese_words:
+            # Check if this word contains known keywords from our synonym map
+            for key, synonyms in self.SYNONYM_MAP.items():
+                for syn in synonyms:
+                    if syn in chinese_word and syn != chinese_word and len(syn) >= 2:
+                        keywords.append(syn)
+        
+        # Extract English words
+        english_words = re.findall(r'[a-zA-Z]+', text.lower())
+        keywords.extend(english_words)
+        
+        # Filter out empty strings and duplicates, but keep order
+        seen = set()
+        filtered_keywords = []
+        for kw in keywords:
+            kw = kw.strip()
+            if kw and kw not in seen and kw not in common_words:
+                seen.add(kw)
+                filtered_keywords.append(kw)
+        
+        return filtered_keywords
