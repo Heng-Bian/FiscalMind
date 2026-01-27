@@ -27,7 +27,13 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **Function Calling**: 基于LLM工具内省的智能Agent
 - ✅ **多步推理**: 支持链式调用多个工具完成复杂任务
 
-详细文档请查看: [新功能文档](docs/NEW_FEATURES.md)
+### 🆕 多表格检测 (v2.1)
+- ✅ **多表格解析**: 自动检测单个sheet中的多个表格
+- ✅ **表格偏移识别**: 支持不从A1开始的表格
+- ✅ **描述提取**: 自动提取表格附近的描述文本
+- ✅ **向后兼容**: 默认关闭，不影响现有代码
+
+详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md)
 
 ## 技术栈 (Tech Stack)
 
@@ -223,6 +229,34 @@ print(response)
 analysis = agent.analyze_sheet('sales_data.xlsx', '销售明细')
 print(analysis)
 ```
+
+### 示例 6: 多表格检测
+
+```python
+from fiscal_mind.parser import ExcelParser
+
+# 创建启用多表格检测的解析器
+parser = ExcelParser(detect_multiple_tables=True)
+
+# 加载包含多个表格的文件
+doc = parser.load_document('examples/multi_table_sheet.xlsx')
+
+# 获取工作表摘要
+sheet_name = doc.get_sheet_names()[0]
+summary = doc.get_sheet_summary(sheet_name)
+
+print(f"检测到 {summary.get('num_tables', 0)} 个表格")
+
+# 访问各个表格
+for i in range(summary.get('num_tables', 0)):
+    table_info = doc.get_table_info(sheet_name, i)
+    print(f"\n表格 {i}:")
+    print(f"  描述: {table_info.description}")
+    print(f"  位置: 行{table_info.start_row}, 列{table_info.start_col}")
+    print(f"  数据:\n{table_info.data.head()}")
+```
+
+详见: [多表格检测文档](docs/MULTI_TABLE_DETECTION.md)
 
 ## 架构设计 (Architecture)
 
