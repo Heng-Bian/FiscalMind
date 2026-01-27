@@ -8,6 +8,8 @@ from typing import List, Optional, Dict, Any, Tuple
 from difflib import SequenceMatcher
 import logging
 import os
+import re
+import ast
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +372,6 @@ Return ONLY the list, no explanation."""
             result_text = response.content.strip()
             
             # Parse the response
-            import ast
             try:
                 result = ast.literal_eval(result_text)
                 if isinstance(result, list):
@@ -449,7 +450,6 @@ Return ONLY the tuple, no explanation."""
             result_text = response.content.strip()
             
             # Parse the response
-            import ast
             try:
                 result = ast.literal_eval(result_text)
                 if isinstance(result, tuple) and len(result) == 2:
@@ -524,8 +524,6 @@ Return ONLY the tuple, no explanation."""
     
     def _extract_keywords(self, text: str) -> List[str]:
         """从文本中提取关键词"""
-        import re
-        
         # Remove common words
         common_words = {'的', '是', '在', '和', '与', '了', '这', '那', '有', '一', '个', '年',
                        'the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at'}
@@ -554,6 +552,21 @@ Return ONLY the tuple, no explanation."""
                 for syn in synonyms:
                     if syn in chinese_word and syn != chinese_word and len(syn) >= 2:
                         keywords.append(syn)
+        
+        # Extract English words
+        english_words = re.findall(r'[a-zA-Z]+', text.lower())
+        keywords.extend(english_words)
+        
+        # Filter out empty strings and duplicates, but keep order
+        seen = set()
+        filtered_keywords = []
+        for kw in keywords:
+            kw = kw.strip()
+            if kw and kw not in seen and kw not in common_words:
+                seen.add(kw)
+                filtered_keywords.append(kw)
+        
+        return filtered_keywords
         
         # Extract English words
         english_words = re.findall(r'[a-zA-Z]+', text.lower())
