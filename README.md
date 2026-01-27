@@ -33,7 +33,16 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **描述提取**: 自动提取表格附近的描述文本
 - ✅ **向后兼容**: 默认关闭，不影响现有代码
 
-详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md)
+### 🆕 智能语义匹配 (v2.2)
+- ✅ **工作表语义匹配**: 自动识别"24年预算" → "FY24_Budget"
+- ✅ **列名智能匹配**: "薪资" → "月薪", "营收" → "销售额"
+- ✅ **关联键自动发现**: 智能识别"员工编号" ↔ "工号"
+- ✅ **查询意图识别**: LLM增强的自然语言理解
+- ✅ **值模糊匹配**: "北京" = "北京市" = "Beijing"
+- ✅ **文档名智能定位**: "报销单" → "reimbursement_v2.xlsx"
+- ✅ **LLM保底机制**: 高可信度的语义匹配
+
+详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md)
 
 ## 技术栈 (Tech Stack)
 
