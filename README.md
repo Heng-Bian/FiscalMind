@@ -42,6 +42,14 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **文档名智能定位**: "报销单" → "reimbursement_v2.xlsx"
 - ✅ **LLM保底机制**: 高可信度的语义匹配
 
+### 🆕 Plan-ReAct-Reflect架构 (v3.0)
+- ✅ **智能规划**: 自动将复杂查询分解为可执行步骤
+- ✅ **推理行动**: 基于计划执行推理和工具调用
+- ✅ **自我反思**: 评估执行进度，动态调整策略
+- ✅ **区域对比**: 智能回答"哪个大区今年表现更好"类问题
+- ✅ **多维分析**: 支持销售额、利润率等多维度对比
+- ✅ **迭代优化**: 通过反思机制持续优化分析过程
+
 详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md)
 
 ## 技术栈 (Tech Stack)
@@ -267,6 +275,46 @@ for i in range(summary.get('num_tables', 0)):
 
 详见: [多表格检测文档](docs/MULTI_TABLE_DETECTION.md)
 
+### 示例 7: 使用PRR Agent进行复杂分析
+
+```python
+from fiscal_mind.prr_agent import PRRAgent
+
+# 创建PRR Agent
+agent = PRRAgent()
+
+# 加载区域业绩数据
+agent.load_documents(['examples/regional_performance.xlsx'])
+
+# 提问：哪个大区今年表现更好？
+# PRR Agent会自动：
+# 1. Plan - 制定分析计划（识别数据、提取指标、计算汇总、对比分析）
+# 2. ReAct - 执行推理和行动（调用工具获取数据）
+# 3. Reflect - 反思进度，决定下一步
+answer = agent.query("哪个大区今年表现更好?")
+print(answer)
+
+# 输出示例:
+# 问题: 哪个大区今年表现更好?
+# 
+# 分析结果:
+# 1. 识别包含区域(大区)数据的工作表
+#    找到 1 个文档
+# 2. 提取各个区域的关键业绩指标(如销售额、利润等)
+#    获取 30 条数据
+# ...
+# 结论: 根据分析，华东大区表现最佳。
+
+# 复杂对比查询
+answer = agent.query("对比各大区的销售额和利润率，找出综合表现最好的大区")
+print(answer)
+```
+
+PRR架构特别适合回答复杂的财务分析问题:
+- "哪个大区今年表现更好？"
+- "哪个产品的利润率最高？"
+- "销售额增长最快的是哪个区域？"
+
 ## 架构设计 (Architecture)
 
 ```
@@ -275,18 +323,28 @@ FiscalMind/
 │   ├── __init__.py          # 包初始化
 │   ├── parser.py            # Excel解析器
 │   ├── meta_functions.py    # 元功能和查询工具
-│   ├── agent.py             # LangGraph Agent
+│   ├── agent.py             # 基础LangGraph Agent
+│   ├── enhanced_agent.py    # 增强Agent (Function Calling)
+│   ├── prr_agent.py         # PRR Agent (Plan-ReAct-Reflect)
+│   ├── tool_executor.py     # 工具执行器
+│   ├── tools.py             # 工具定义
+│   ├── semantic_resolver.py # 语义解析器
 │   ├── main.py              # 主程序入口
 │   └── utils.py             # 工具函数
 ├── examples/
 │   ├── create_samples.py    # 创建示例数据
+│   ├── prr_example.py       # PRR Agent示例
 │   └── *.xlsx               # 示例Excel文件
+├── tests/
+│   ├── test_prr_agent.py    # PRR Agent测试
+│   └── ...                  # 其他测试
 ├── requirements.txt         # 依赖列表
 └── README.md               # 项目文档
 ```
 
 ## Agent工作流 (Agent Workflow)
 
+### 基础Agent工作流
 ```
 用户查询 (User Query)
     ↓
@@ -300,6 +358,49 @@ FiscalMind/
     ↓
 返回结果 (Return Result)
 ```
+
+### PRR Agent工作流 (Plan-ReAct-Reflect)
+
+```
+用户查询 (User Query)
+    ↓
+加载上下文 (Load Context)
+    ↓
+┌──────────────────────────────────────┐
+│  Plan (计划)                          │
+│  - 分析查询意图                       │
+│  - 分解为执行步骤                     │
+│  - 考虑之前的反思（如需重新规划）      │
+└──────────────────────────────────────┘
+    ↓
+┌──────────────────────────────────────┐
+│  ReAct (推理-行动)                    │
+│  - Reasoning: 思考当前步骤需要什么    │
+│  - Acting: 调用工具执行行动          │
+│  - Observation: 记录执行结果         │
+└──────────────────────────────────────┘
+    ↓
+┌──────────────────────────────────────┐
+│  Reflect (反思)                       │
+│  - 评估执行进度                       │
+│  - 分析结果质量                       │
+│  - 决定下一步行动                     │
+└──────────────────────────────────────┘
+    ↓
+    决策 ──→ 继续下一步？ ──Yes──→ 返回ReAct
+    │
+    No (完成/需重新规划)
+    ↓
+    生成最终答案
+    ↓
+返回结果 (Return Result)
+```
+
+**PRR架构优势**:
+- 📋 **智能规划**: 自动将"哪个大区表现更好"分解为具体步骤
+- 🔄 **迭代执行**: 通过多轮ReAct循环获取和分析数据
+- 🤔 **自我反思**: 评估进度，发现问题时自动调整策略
+- 🎯 **目标导向**: 持续优化直到获得满意答案
 
 ## 扩展开发 (Extension Development)
 
