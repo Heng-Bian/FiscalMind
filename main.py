@@ -12,9 +12,6 @@ import logging
 from pathlib import Path
 from typing import List
 
-# 确保可以导入fiscal_mind模块
-sys.path.insert(0, str(Path(__file__).parent))
-
 from fiscal_mind.prr_agent import PRRAgent
 
 # 配置日志
@@ -100,7 +97,7 @@ def interactive_mode(agent: PRRAgent):
             print(response)
             print("="*80 + "\n")
             
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             print("\n\n感谢使用 FiscalMind！再见！")
             break
         except Exception as e:
@@ -172,7 +169,14 @@ def main():
         print("\n⚠️  警告: 当前目录未找到任何Excel文件 (.xlsx, .xls)")
         print("\n建议:")
         print("  1. 将Excel文件放置在当前目录")
-        print("  2. 或者使用示例数据: python examples/create_samples.py")
+        
+        # 检查examples目录是否存在
+        examples_dir = Path(__file__).parent / "examples"
+        if examples_dir.exists() and (examples_dir / "create_samples.py").exists():
+            print("  2. 或者使用示例数据: python examples/create_samples.py")
+        else:
+            print("  2. 或者创建您自己的Excel数据文件")
+        
         print("  3. 然后重新运行本程序")
         return
     
