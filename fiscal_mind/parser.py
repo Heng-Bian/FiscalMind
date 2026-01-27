@@ -4,26 +4,255 @@ Excel document parser module for extracting and processing table data.
 """
 
 import pandas as pd
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import logging
+import openpyxl
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class TableInfo:
+    """表格信息类，存储检测到的表格元数据"""
+    
+    def __init__(self, data: pd.DataFrame, start_row: int, start_col: int, 
+                 description: Optional[str] = None):
+        """
+        初始化表格信息
+        
+        Args:
+            data: 表格数据DataFrame
+            start_row: 表格起始行号（0-based）
+            start_col: 表格起始列号（0-based）
+            description: 表格描述文本
+        """
+        self.data = data
+        self.start_row = start_row
+        self.start_col = start_col
+        self.description = description
+        self.end_row = start_row + len(data)
+        self.end_col = start_col + len(data.columns)
+    
+    def __repr__(self):
+        return (f"TableInfo(shape={self.data.shape}, "
+                f"position=({self.start_row},{self.start_col}), "
+                f"description='{self.description}')")
+
+
+class TableDetector:
+    """表格检测器，用于在sheet中检测多个表格"""
+    
+    @staticmethod
+    def _is_likely_header_row(row_data: List[Any]) -> bool:
+        """
+        判断是否可能是表头行
+        
+        Args:
+            row_data: 行数据列表
+            
+        Returns:
+            是否可能是表头
+        """
+        # 过滤掉空值
+        non_empty = [v for v in row_data if pd.notna(v) and str(v).strip()]
+        
+        # 空行不是表头
+        if len(non_empty) == 0:
+            return False
+        
+        # 至少有2个非空值才可能是表头
+        if len(non_empty) < 2:
+            return False
+        
+        # 检查是否大部分是字符串且不是数字
+        text_count = 0
+        for v in non_empty:
+            try:
+                # 如果能转换为数字，可能不是表头
+                float(str(v).replace('%', '').replace(',', ''))
+            except (ValueError, AttributeError):
+                text_count += 1
+        
+        # 至少50%是文本才可能是表头
+        return text_count >= len(non_empty) * 0.5
+    
+    @staticmethod
+    def _is_data_row(row_data: List[Any], header_count: int) -> bool:
+        """
+        判断是否是数据行
+        
+        Args:
+            row_data: 行数据列表
+            header_count: 表头列数
+            
+        Returns:
+            是否是数据行
+        """
+        non_empty = [v for v in row_data[:header_count] if pd.notna(v) and str(v).strip()]
+        # 至少有一个非空值
+        return len(non_empty) > 0
+    
+    @staticmethod
+    def detect_tables(workbook_path: str, sheet_name: str) -> List[TableInfo]:
+        """
+        检测sheet中的所有表格
+        
+        Args:
+            workbook_path: Excel文件路径
+            sheet_name: 工作表名称
+            
+        Returns:
+            检测到的表格信息列表
+        """
+        wb = openpyxl.load_workbook(workbook_path, data_only=True)
+        ws = wb[sheet_name]
+        
+        # 读取所有单元格数据到二维数组
+        max_row = ws.max_row
+        max_col = ws.max_column
+        
+        # 读取数据到numpy数组
+        data_array = []
+        for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
+            row_data = [cell.value for cell in row]
+            data_array.append(row_data)
+        
+        tables = []
+        processed_cells = set()  # 存储已处理的单元格坐标 (row, col)
+        
+        # 遍历每一行查找表头
+        for row_idx in range(max_row):
+            row_data = data_array[row_idx]
+            
+            # 在这一行中查找可能的表头区域
+            col_idx = 0
+            while col_idx < max_col:
+                # 跳过已处理的单元格
+                if (row_idx, col_idx) in processed_cells:
+                    col_idx += 1
+                    continue
+                
+                # 跳过空单元格
+                if pd.isna(row_data[col_idx]) or not str(row_data[col_idx]).strip():
+                    col_idx += 1
+                    continue
+                
+                # 找到非空单元格，检查是否是表头的开始
+                start_col = col_idx
+                
+                # 收集连续的非空单元格作为潜在表头
+                # 允许最多1个空列的间隙，但这些间隙计入表头
+                potential_headers = []
+                temp_col = start_col
+                empty_count = 0
+                consecutive_empty = 0
+                
+                while temp_col < max_col:
+                    if pd.notna(row_data[temp_col]) and str(row_data[temp_col]).strip():
+                        # 遇到非空单元格
+                        # 如果之前有空列但不超过阈值，填充None
+                        if empty_count > 0:
+                            for _ in range(empty_count):
+                                potential_headers.append(None)
+                        potential_headers.append(row_data[temp_col])
+                        empty_count = 0
+                        consecutive_empty = 0
+                        temp_col += 1
+                    else:
+                        # 遇到空单元格
+                        empty_count += 1
+                        consecutive_empty += 1
+                        temp_col += 1
+                        # 如果有连续空列，认为表格结束
+                        if consecutive_empty >= 1:  # 只要有1个空列就停止
+                            break
+                
+                # 检查这些单元格是否像表头
+                if len(potential_headers) >= 2 and TableDetector._is_likely_header_row(potential_headers):
+                    end_col = start_col + len(potential_headers) - 1
+                    headers = potential_headers
+                    header_count = len(headers)
+                    
+                    # 查找数据行
+                    data_rows = []
+                    description = None
+                    
+                    # 检查表头上方是否有描述（向上最多查找3行）
+                    for desc_idx in range(max(0, row_idx - 3), row_idx):
+                        desc_row = data_array[desc_idx]
+                        # 只检查相同列区域的描述
+                        for check_col in range(start_col, min(end_col + 2, max_col)):
+                            if pd.notna(desc_row[check_col]) and str(desc_row[check_col]).strip():
+                                cell_str = str(desc_row[check_col]).strip()
+                                # 如果文本较长且包含中文或特殊字符，可能是描述
+                                if len(cell_str) > 3 and ('表' in cell_str or '数据' in cell_str or '：' in cell_str or ':' in cell_str):
+                                    description = cell_str
+                                    # 标记描述所在的行为已处理
+                                    for mark_col in range(max_col):
+                                        processed_cells.add((desc_idx, mark_col))
+                                    break
+                        if description:
+                            break
+                    
+                    # 提取数据行
+                    for data_row_idx in range(row_idx + 1, max_row):
+                        data_row = data_array[data_row_idx]
+                        data_slice = data_row[start_col:start_col + header_count]
+                        
+                        if TableDetector._is_data_row(data_slice, header_count):
+                            data_rows.append(data_slice)
+                            # 标记这些单元格为已处理
+                            for mark_col in range(start_col, start_col + header_count):
+                                processed_cells.add((data_row_idx, mark_col))
+                        else:
+                            # 遇到空行，表格结束
+                            if len(data_rows) > 0:
+                                break
+                    
+                    # 如果找到了数据行，创建表格
+                    if len(data_rows) > 0:
+                        # 创建DataFrame
+                        df = pd.DataFrame(data_rows, columns=headers)
+                        
+                        # 创建TableInfo
+                        table_info = TableInfo(
+                            data=df,
+                            start_row=row_idx,
+                            start_col=start_col,
+                            description=description
+                        )
+                        tables.append(table_info)
+                        
+                        # 标记表头行的这些单元格为已处理
+                        for mark_col in range(start_col, start_col + header_count):
+                            processed_cells.add((row_idx, mark_col))
+                    
+                    # 移动到这个区域之后
+                    col_idx = end_col + 1
+                else:
+                    col_idx += 1
+        
+        wb.close()
+        return tables
 
 
 class ExcelDocument:
     """表示单个Excel文档及其内容"""
     
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, detect_multiple_tables: bool = False):
         """
         初始化Excel文档
         
         Args:
             file_path: Excel文件路径
+            detect_multiple_tables: 是否检测多表格，默认False保持向后兼容
         """
         self.file_path = Path(file_path)
         self.file_name = self.file_path.name
         self.sheets: Dict[str, pd.DataFrame] = {}
+        self.detect_multiple_tables = detect_multiple_tables
+        self.multi_tables: Dict[str, List[TableInfo]] = {}  # 存储多表格信息
         self._load_document()
     
     def _load_document(self):
@@ -31,11 +260,36 @@ class ExcelDocument:
         try:
             # 读取所有工作表
             excel_file = pd.ExcelFile(self.file_path)
+            
             for sheet_name in excel_file.sheet_names:
-                self.sheets[sheet_name] = pd.read_excel(
-                    excel_file, 
-                    sheet_name=sheet_name
-                )
+                if self.detect_multiple_tables:
+                    # 使用多表格检测
+                    tables = TableDetector.detect_tables(str(self.file_path), sheet_name)
+                    
+                    if len(tables) == 0:
+                        # 如果没有检测到表格，使用默认方式读取
+                        self.sheets[sheet_name] = pd.read_excel(
+                            excel_file, 
+                            sheet_name=sheet_name
+                        )
+                        logger.info(f"工作表 '{sheet_name}' 未检测到表格，使用默认方式读取")
+                    elif len(tables) == 1:
+                        # 只有一个表格，直接使用
+                        self.sheets[sheet_name] = tables[0].data
+                        self.multi_tables[sheet_name] = tables
+                        logger.info(f"工作表 '{sheet_name}' 检测到1个表格 (位置: 行{tables[0].start_row}, 列{tables[0].start_col})")
+                    else:
+                        # 多个表格，使用第一个作为主表格（向后兼容）
+                        self.sheets[sheet_name] = tables[0].data
+                        self.multi_tables[sheet_name] = tables
+                        logger.info(f"工作表 '{sheet_name}' 检测到{len(tables)}个表格")
+                else:
+                    # 默认方式：读取整个sheet
+                    self.sheets[sheet_name] = pd.read_excel(
+                        excel_file, 
+                        sheet_name=sheet_name
+                    )
+            
             logger.info(f"成功加载文档: {self.file_name}, 包含 {len(self.sheets)} 个工作表")
         except Exception as e:
             logger.error(f"加载文档失败 {self.file_path}: {str(e)}")
@@ -48,6 +302,50 @@ class ExcelDocument:
     def get_sheet(self, sheet_name: str) -> Optional[pd.DataFrame]:
         """获取指定工作表的数据"""
         return self.sheets.get(sheet_name)
+    
+    def get_sheet_tables(self, sheet_name: str) -> Optional[List[TableInfo]]:
+        """
+        获取工作表中检测到的所有表格
+        
+        Args:
+            sheet_name: 工作表名称
+            
+        Returns:
+            表格信息列表，如果未启用多表格检测或不存在则返回None
+        """
+        return self.multi_tables.get(sheet_name)
+    
+    def get_table_by_index(self, sheet_name: str, table_index: int) -> Optional[pd.DataFrame]:
+        """
+        获取工作表中指定索引的表格数据
+        
+        Args:
+            sheet_name: 工作表名称
+            table_index: 表格索引（0-based）
+            
+        Returns:
+            表格DataFrame，如果不存在则返回None
+        """
+        tables = self.multi_tables.get(sheet_name)
+        if tables and 0 <= table_index < len(tables):
+            return tables[table_index].data
+        return None
+    
+    def get_table_info(self, sheet_name: str, table_index: int) -> Optional[TableInfo]:
+        """
+        获取工作表中指定索引的表格完整信息
+        
+        Args:
+            sheet_name: 工作表名称
+            table_index: 表格索引（0-based）
+            
+        Returns:
+            TableInfo对象，如果不存在则返回None
+        """
+        tables = self.multi_tables.get(sheet_name)
+        if tables and 0 <= table_index < len(tables):
+            return tables[table_index]
+        return None
     
     def get_sheet_summary(self, sheet_name: str) -> Dict[str, Any]:
         """
@@ -72,6 +370,21 @@ class ExcelDocument:
             "has_null": df.isnull().any().to_dict(),
             "memory_usage": f"{df.memory_usage(deep=True).sum() / 1024:.2f} KB"
         }
+        
+        # 如果启用了多表格检测，添加表格信息
+        if self.detect_multiple_tables and sheet_name in self.multi_tables:
+            tables = self.multi_tables[sheet_name]
+            summary["num_tables"] = len(tables)
+            summary["tables"] = []
+            for i, table_info in enumerate(tables):
+                table_summary = {
+                    "index": i,
+                    "position": f"行{table_info.start_row},列{table_info.start_col}",
+                    "shape": table_info.data.shape,
+                    "description": table_info.description,
+                    "columns": table_info.data.columns.tolist()
+                }
+                summary["tables"].append(table_summary)
         
         return summary
     
@@ -359,36 +672,47 @@ class TableJoiner:
 class ExcelParser:
     """Excel文档解析器，支持处理多个文档"""
     
-    def __init__(self):
-        """初始化解析器"""
+    def __init__(self, detect_multiple_tables: bool = False):
+        """
+        初始化解析器
+        
+        Args:
+            detect_multiple_tables: 是否检测sheet中的多个表格，默认False保持向后兼容
+        """
         self.documents: Dict[str, ExcelDocument] = {}
         self.joiner = TableJoiner()
+        self.detect_multiple_tables = detect_multiple_tables
     
-    def load_document(self, file_path: str) -> ExcelDocument:
+    def load_document(self, file_path: str, detect_multiple_tables: Optional[bool] = None) -> ExcelDocument:
         """
         加载Excel文档
         
         Args:
             file_path: Excel文件路径
+            detect_multiple_tables: 是否检测多表格，如果为None则使用解析器的默认设置
             
         Returns:
             ExcelDocument对象
         """
-        doc = ExcelDocument(file_path)
+        if detect_multiple_tables is None:
+            detect_multiple_tables = self.detect_multiple_tables
+        
+        doc = ExcelDocument(file_path, detect_multiple_tables=detect_multiple_tables)
         self.documents[doc.file_name] = doc
         return doc
     
-    def load_documents(self, file_paths: List[str]) -> List[ExcelDocument]:
+    def load_documents(self, file_paths: List[str], detect_multiple_tables: Optional[bool] = None) -> List[ExcelDocument]:
         """
         批量加载多个Excel文档
         
         Args:
             file_paths: Excel文件路径列表
+            detect_multiple_tables: 是否检测多表格，如果为None则使用解析器的默认设置
             
         Returns:
             ExcelDocument对象列表
         """
-        return [self.load_document(path) for path in file_paths]
+        return [self.load_document(path, detect_multiple_tables) for path in file_paths]
     
     def get_document(self, file_name: str) -> Optional[ExcelDocument]:
         """
