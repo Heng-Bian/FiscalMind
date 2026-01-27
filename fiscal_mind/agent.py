@@ -11,6 +11,7 @@ import logging
 
 from fiscal_mind.parser import ExcelParser, ExcelDocument
 from fiscal_mind.meta_functions import TableMetaFunctions, TableQueryHelper
+from fiscal_mind.semantic_resolver import SemanticResolver
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +30,17 @@ class AgentState(TypedDict):
 class TableDocumentAgent:
     """表格文档分析Agent"""
     
-    def __init__(self, parser: Optional[ExcelParser] = None):
+    def __init__(self, parser: Optional[ExcelParser] = None, llm=None):
         """
         初始化Agent
         
         Args:
             parser: ExcelParser实例，如果为None则创建新实例
+            llm: 语言模型实例（可选，用于增强查询分析）
         """
-        self.parser = parser or ExcelParser()
+        self.parser = parser or ExcelParser(llm=llm)
+        self.llm = llm
+        self.semantic_resolver = SemanticResolver(llm=llm)
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
@@ -80,29 +84,80 @@ class TableDocumentAgent:
             }
     
     def _analyze_query_node(self, state: AgentState) -> Dict[str, Any]:
-        """分析查询节点"""
+        """分析查询节点（支持LLM增强的意图识别）"""
         logger.info(f"Analyzing query: {state['query']}")
         
-        # 这里简化处理，实际可以集成LLM进行查询分析
-        # 提取关键信息，确定查询类型
         query_lower = state["query"].lower()
         
         query_info = {
-            "type": "general",  # general, search, statistics, aggregation
+            "type": "general",  # general, search, statistics, aggregation, filter, join
             "keywords": []
         }
         
-        # 简单的关键词识别
-        if any(word in query_lower for word in ["搜索", "查找", "find", "search"]):
-            query_info["type"] = "search"
-        elif any(word in query_lower for word in ["统计", "汇总", "statistics", "summary"]):
-            query_info["type"] = "statistics"
-        elif any(word in query_lower for word in ["聚合", "分组", "aggregate", "group"]):
-            query_info["type"] = "aggregation"
+        # 扩展的关键词库（支持更丰富的同义词和表达）
+        intent_keywords = {
+            "search": ["搜索", "查找", "找到", "寻找", "find", "search", "look for", "locate"],
+            "statistics": ["统计", "汇总", "总结", "概览", "statistics", "summary", "summarize", "aggregate", "计算", "算一下", "平均"],
+            "aggregation": ["聚合", "分组", "汇总", "group", "aggregate", "by", "按照"],
+            "filter": ["过滤", "筛选", "选择", "filter", "where", "条件", "满足"],
+            "comparison": ["对比", "比较", "compare", "差异", "区别"],
+            "join": ["关联", "连接", "合并", "join", "merge", "组合"],
+            "sort": ["排序", "排列", "sort", "order", "最大", "最小", "top"],
+        }
+        
+        # 使用LLM进行意图分类（如果可用）
+        if self.llm:
+            try:
+                query_type = self._classify_query_with_llm(state["query"])
+                if query_type:
+                    query_info["type"] = query_type
+                    logger.info(f"LLM classified query type as: {query_type}")
+                    return {"result": query_info}
+            except Exception as e:
+                logger.warning(f"LLM intent classification failed: {str(e)}, falling back to keyword matching")
+        
+        # 关键词匹配（保底机制）
+        for intent_type, keywords in intent_keywords.items():
+            if any(word in query_lower for word in keywords):
+                query_info["type"] = intent_type
+                break
         
         return {
             "result": query_info
         }
+    
+    def _classify_query_with_llm(self, query: str) -> Optional[str]:
+        """使用LLM分类查询意图"""
+        if not self.llm:
+            return None
+        
+        try:
+            prompt = f"""Classify the following user query into ONE of these categories:
+- search: Finding specific data or records
+- statistics: Computing statistics, averages, sums, counts
+- aggregation: Grouping and aggregating data
+- filter: Filtering data based on conditions
+- comparison: Comparing different data points
+- join: Joining or merging tables
+- sort: Sorting or ranking data
+- general: General questions or requests
+
+User query: "{query}"
+
+Return ONLY the category name (one word), nothing else."""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            result = response.content.strip().lower()
+            
+            # Validate the result
+            valid_types = ["search", "statistics", "aggregation", "filter", "comparison", "join", "sort", "general"]
+            if result in valid_types:
+                return result
+                
+        except Exception as e:
+            logger.error(f"LLM classification error: {str(e)}")
+        
+        return None
     
     def _execute_query_node(self, state: AgentState) -> Dict[str, Any]:
         """执行查询节点"""
