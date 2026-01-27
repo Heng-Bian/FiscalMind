@@ -344,6 +344,12 @@ class TableQueryHelper:
                 logger.warning("无法找到数值列进行聚合")
                 return None
         
+        # 确保分组列和聚合列不重叠
+        agg_columns = [col for col in agg_columns if col not in group_by]
+        if not agg_columns:
+            logger.warning("移除重叠列后没有剩余的聚合列")
+            return None
+        
         # 验证列存在
         missing_cols = set(group_by + agg_columns) - set(df.columns)
         if missing_cols:
