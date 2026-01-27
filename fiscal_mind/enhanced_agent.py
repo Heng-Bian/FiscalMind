@@ -138,15 +138,31 @@ class FunctionCallingAgent:
         使用LLM选择工具（Function Calling）
         
         注意：这需要配置支持Function Calling的LLM（如OpenAI GPT-4）
+        TODO: 完整的LLM Function Calling集成示例：
+        
+        示例代码：
+        ```python
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        llm = ChatOpenAI(model="gpt-4", temperature=0)
+        messages = [
+            SystemMessage(content=f"你是一个数据分析助手。可用工具: {context}"),
+            HumanMessage(content=query)
+        ]
+        
+        response = llm.invoke(
+            messages=messages,
+            functions=TOOL_SCHEMAS
+        )
+        
+        return response.tool_calls
+        ```
+        
+        当前状态：等待配置LLM实例，使用规则兜底
         """
-        # TODO: 实现LLM Function Calling
-        # 这里需要调用LLM的function calling API
-        # 示例伪代码：
-        # response = self.llm.invoke(
-        #     messages=[...],
-        #     functions=TOOL_SCHEMAS
-        # )
-        # return response.tool_calls
+        # 如果LLM支持Function Calling，使用上述模式集成
+        # 当前实现：回退到基于规则的工具选择
         
         logger.warning("LLM未配置，回退到基于规则的工具选择")
         return self._rule_based_select_tools(query, previous_results)

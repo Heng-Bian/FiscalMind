@@ -345,7 +345,8 @@ class TableQueryHelper:
                 return None
         
         # 确保分组列和聚合列不重叠
-        agg_columns = [col for col in agg_columns if col not in group_by]
+        group_by_set = set(group_by)
+        agg_columns = [col for col in agg_columns if col not in group_by_set]
         if not agg_columns:
             logger.warning("移除重叠列后没有剩余的聚合列")
             return None
