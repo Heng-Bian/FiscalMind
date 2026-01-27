@@ -858,3 +858,12 @@ class PRRAgent:
         
         # 返回最终答案
         return final_state.get("final_answer", "无法生成响应")
+    
+    def get_document_summary(self) -> str:
+        """
+        获取所有已加载文档的摘要
+        
+        Returns:
+            文档摘要文本
+        """
+        return TableMetaFunctions.create_data_context(self.parser)
