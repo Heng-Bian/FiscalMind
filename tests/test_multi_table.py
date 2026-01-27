@@ -15,6 +15,11 @@ import logging
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 
+# Test file paths
+MULTI_TABLE_FILE = 'examples/multi_table_sheet.xlsx'
+OFFSET_TABLE_FILE = 'examples/offset_table_sheet.xlsx'
+STANDARD_FILE = 'examples/financial_report.xlsx'
+
 
 def test_multi_table_detection():
     """测试多表格检测功能"""
@@ -27,7 +32,7 @@ def test_multi_table_detection():
     
     # 加载包含多个表格的文件
     print("\n加载多表格示例文件...")
-    doc = parser.load_document('examples/multi_table_sheet.xlsx')
+    doc = parser.load_document(MULTI_TABLE_FILE)
     
     print(f"✓ 文档名称: {doc.file_name}")
     print(f"✓ 工作表数量: {len(doc.sheets)}")
@@ -67,7 +72,7 @@ def test_offset_table_detection():
     parser = ExcelParser(detect_multiple_tables=True)
     
     print("\n加载偏移表格示例文件...")
-    doc = parser.load_document('examples/offset_table_sheet.xlsx')
+    doc = parser.load_document(OFFSET_TABLE_FILE)
     
     sheet_name = doc.get_sheet_names()[0]
     summary = doc.get_sheet_summary(sheet_name)
@@ -100,7 +105,7 @@ def test_backward_compatibility():
     parser = ExcelParser(detect_multiple_tables=False)
     
     print("\n加载标准文件...")
-    doc = parser.load_document('examples/financial_report.xlsx')
+    doc = parser.load_document(STANDARD_FILE)
     
     print(f"✓ 文档名称: {doc.file_name}")
     print(f"✓ 工作表数量: {len(doc.sheets)}")
@@ -125,7 +130,7 @@ def test_api_methods():
     print("="*70)
     
     parser = ExcelParser(detect_multiple_tables=True)
-    doc = parser.load_document('examples/multi_table_sheet.xlsx')
+    doc = parser.load_document(MULTI_TABLE_FILE)
     
     sheet_name = doc.get_sheet_names()[0]
     

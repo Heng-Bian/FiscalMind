@@ -13,6 +13,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# Configuration constants for table detection
+HEADER_TEXT_THRESHOLD = 0.5  # Minimum proportion of text cells in a header row
+MAX_DESCRIPTION_SEARCH_ROWS = 3  # Maximum rows to search above table for description
+MAX_CONSECUTIVE_EMPTY_COLUMNS = 1  # Maximum consecutive empty columns in a table
+
+
 class TableInfo:
     """表格信息类，存储检测到的表格元数据"""
     
@@ -75,7 +81,7 @@ class TableDetector:
                 text_count += 1
         
         # 至少50%是文本才可能是表头
-        return text_count >= len(non_empty) * 0.5
+        return text_count >= len(non_empty) * HEADER_TEXT_THRESHOLD
     
     @staticmethod
     def _is_data_row(row_data: List[Any], header_count: int) -> bool:
@@ -165,7 +171,7 @@ class TableDetector:
                         consecutive_empty += 1
                         temp_col += 1
                         # 如果有连续空列，认为表格结束
-                        if consecutive_empty >= 1:  # 只要有1个空列就停止
+                        if consecutive_empty >= MAX_CONSECUTIVE_EMPTY_COLUMNS:
                             break
                 
                 # 检查这些单元格是否像表头
@@ -179,7 +185,7 @@ class TableDetector:
                     description = None
                     
                     # 检查表头上方是否有描述（向上最多查找3行）
-                    for desc_idx in range(max(0, row_idx - 3), row_idx):
+                    for desc_idx in range(max(0, row_idx - MAX_DESCRIPTION_SEARCH_ROWS), row_idx):
                         desc_row = data_array[desc_idx]
                         # 只检查相同列区域的描述
                         for check_col in range(start_col, min(end_col + 2, max_col)):
