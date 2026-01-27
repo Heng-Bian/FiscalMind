@@ -9,6 +9,7 @@ from pathlib import Path
 import logging
 import openpyxl
 import numpy as np
+from fiscal_mind.semantic_resolver import SemanticResolver
 
 logger = logging.getLogger(__name__)
 
@@ -246,19 +247,22 @@ class TableDetector:
 class ExcelDocument:
     """表示单个Excel文档及其内容"""
     
-    def __init__(self, file_path: str, detect_multiple_tables: bool = False):
+    def __init__(self, file_path: str, detect_multiple_tables: bool = False, 
+                 semantic_resolver: Optional[SemanticResolver] = None):
         """
         初始化Excel文档
         
         Args:
             file_path: Excel文件路径
             detect_multiple_tables: 是否检测多表格，默认False保持向后兼容
+            semantic_resolver: 语义解析器实例（可选）
         """
         self.file_path = Path(file_path)
         self.file_name = self.file_path.name
         self.sheets: Dict[str, pd.DataFrame] = {}
         self.detect_multiple_tables = detect_multiple_tables
         self.multi_tables: Dict[str, List[TableInfo]] = {}  # 存储多表格信息
+        self.semantic_resolver = semantic_resolver or SemanticResolver()
         self._load_document()
     
     def _load_document(self):
@@ -305,9 +309,32 @@ class ExcelDocument:
         """获取所有工作表名称"""
         return list(self.sheets.keys())
     
-    def get_sheet(self, sheet_name: str) -> Optional[pd.DataFrame]:
-        """获取指定工作表的数据"""
-        return self.sheets.get(sheet_name)
+    def get_sheet(self, sheet_name: str, use_semantic: bool = True) -> Optional[pd.DataFrame]:
+        """
+        获取指定工作表的数据
+        
+        Args:
+            sheet_name: 工作表名称
+            use_semantic: 是否使用语义匹配（如果精确匹配失败）
+            
+        Returns:
+            DataFrame，如果未找到则返回None
+        """
+        # First try exact match
+        if sheet_name in self.sheets:
+            return self.sheets.get(sheet_name)
+        
+        # If exact match fails and semantic is enabled, try semantic matching
+        if use_semantic and self.semantic_resolver:
+            matched_sheet = self.semantic_resolver.find_sheet_by_semantic(
+                list(self.sheets.keys()), 
+                sheet_name
+            )
+            if matched_sheet:
+                logger.info(f"Semantic match: '{sheet_name}' -> '{matched_sheet}'")
+                return self.sheets.get(matched_sheet)
+        
+        return None
     
     def get_sheet_tables(self, sheet_name: str) -> Optional[List[TableInfo]]:
         """
@@ -488,9 +515,10 @@ class ExcelDocument:
         
         return filtered_df
     
-    def filter_rows_advanced(self, sheet_name: str, filters: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
+    def filter_rows_advanced(self, sheet_name: str, filters: List[Dict[str, Any]], 
+                            use_semantic: bool = True) -> Optional[pd.DataFrame]:
         """
-        高级行过滤，支持多种比较操作符
+        高级行过滤，支持多种比较操作符和语义列名匹配
         
         Args:
             sheet_name: 工作表名称
@@ -500,6 +528,7 @@ class ExcelDocument:
                         'operator': '操作符',  # ==, !=, >, <, >=, <=, between, in, contains
                         'value': 值 或 [min, max] (for between) 或 [值列表] (for in)
                     }
+            use_semantic: 是否使用语义列名匹配（当精确匹配失败时）
         
         Returns:
             过滤后的DataFrame
@@ -522,38 +551,69 @@ class ExcelDocument:
             operator = filter_cond.get('operator', '==')
             value = filter_cond.get('value')
             
+            # Try to find the column (exact or semantic match)
+            actual_col = col
             if col not in df.columns:
-                logger.warning(f"列 '{col}' 不存在，跳过此过滤条件")
-                continue
+                if use_semantic and self.semantic_resolver:
+                    # Try semantic matching
+                    matched_cols = self.semantic_resolver.find_column_by_semantic(df, col)
+                    if matched_cols:
+                        actual_col = matched_cols[0]
+                        logger.info(f"Semantic column match: '{col}' -> '{actual_col}'")
+                    else:
+                        logger.warning(f"列 '{col}' 不存在且未找到语义匹配，跳过此过滤条件")
+                        continue
+                else:
+                    logger.warning(f"列 '{col}' 不存在，跳过此过滤条件")
+                    continue
             
             try:
                 if operator == '==':
-                    filtered_df = filtered_df[filtered_df[col] == value]
+                    # Support fuzzy value matching for categorical data
+                    if use_semantic and pd.api.types.is_object_dtype(filtered_df[actual_col]):
+                        # Normalize values for comparison
+                        normalized_value = self.semantic_resolver.normalize_value(str(value))
+                        filtered_df = filtered_df[
+                            filtered_df[actual_col].apply(
+                                lambda x: self.semantic_resolver.normalize_value(str(x)) == normalized_value
+                            )
+                        ]
+                    else:
+                        filtered_df = filtered_df[filtered_df[actual_col] == value]
                 elif operator == '!=':
-                    filtered_df = filtered_df[filtered_df[col] != value]
+                    filtered_df = filtered_df[filtered_df[actual_col] != value]
                 elif operator == '>':
-                    filtered_df = filtered_df[filtered_df[col] > value]
+                    filtered_df = filtered_df[filtered_df[actual_col] > value]
                 elif operator == '<':
-                    filtered_df = filtered_df[filtered_df[col] < value]
+                    filtered_df = filtered_df[filtered_df[actual_col] < value]
                 elif operator == '>=':
-                    filtered_df = filtered_df[filtered_df[col] >= value]
+                    filtered_df = filtered_df[filtered_df[actual_col] >= value]
                 elif operator == '<=':
-                    filtered_df = filtered_df[filtered_df[col] <= value]
+                    filtered_df = filtered_df[filtered_df[actual_col] <= value]
                 elif operator == 'between':
                     if isinstance(value, (list, tuple)) and len(value) == 2:
                         filtered_df = filtered_df[
-                            (filtered_df[col] >= value[0]) & (filtered_df[col] <= value[1])
+                            (filtered_df[actual_col] >= value[0]) & (filtered_df[actual_col] <= value[1])
                         ]
                     else:
                         logger.warning(f"between操作符需要[min, max]格式的值")
                 elif operator == 'in':
                     if isinstance(value, (list, tuple)):
-                        filtered_df = filtered_df[filtered_df[col].isin(value)]
+                        # Support fuzzy value matching for categorical data
+                        if use_semantic and pd.api.types.is_object_dtype(filtered_df[actual_col]):
+                            normalized_values = [self.semantic_resolver.normalize_value(str(v)) for v in value]
+                            filtered_df = filtered_df[
+                                filtered_df[actual_col].apply(
+                                    lambda x: self.semantic_resolver.normalize_value(str(x)) in normalized_values
+                                )
+                            ]
+                        else:
+                            filtered_df = filtered_df[filtered_df[actual_col].isin(value)]
                     else:
                         logger.warning(f"in操作符需要列表格式的值")
                 elif operator == 'contains':
                     filtered_df = filtered_df[
-                        filtered_df[col].astype(str).str.contains(str(value), case=False, na=False)
+                        filtered_df[actual_col].astype(str).str.contains(str(value), case=False, na=False)
                     ]
                 else:
                     logger.warning(f"不支持的操作符: {operator}")
@@ -678,16 +738,19 @@ class TableJoiner:
 class ExcelParser:
     """Excel文档解析器，支持处理多个文档"""
     
-    def __init__(self, detect_multiple_tables: bool = False):
+    def __init__(self, detect_multiple_tables: bool = False, llm=None):
         """
         初始化解析器
         
         Args:
             detect_multiple_tables: 是否检测sheet中的多个表格，默认False保持向后兼容
+            llm: 语言模型实例（可选，用于语义匹配）
         """
         self.documents: Dict[str, ExcelDocument] = {}
         self.joiner = TableJoiner()
         self.detect_multiple_tables = detect_multiple_tables
+        self.semantic_resolver = SemanticResolver(llm=llm)
+        self.llm = llm
     
     def load_document(self, file_path: str, detect_multiple_tables: Optional[bool] = None) -> ExcelDocument:
         """
@@ -703,7 +766,8 @@ class ExcelParser:
         if detect_multiple_tables is None:
             detect_multiple_tables = self.detect_multiple_tables
         
-        doc = ExcelDocument(file_path, detect_multiple_tables=detect_multiple_tables)
+        doc = ExcelDocument(file_path, detect_multiple_tables=detect_multiple_tables,
+                          semantic_resolver=self.semantic_resolver)
         self.documents[doc.file_name] = doc
         return doc
     
@@ -720,17 +784,32 @@ class ExcelParser:
         """
         return [self.load_document(path, detect_multiple_tables) for path in file_paths]
     
-    def get_document(self, file_name: str) -> Optional[ExcelDocument]:
+    def get_document(self, file_name: str, use_semantic: bool = True) -> Optional[ExcelDocument]:
         """
         获取已加载的文档
         
         Args:
             file_name: 文件名
+            use_semantic: 是否使用语义匹配（如果精确匹配失败）
             
         Returns:
             ExcelDocument对象，如果不存在则返回None
         """
-        return self.documents.get(file_name)
+        # Try exact match first
+        if file_name in self.documents:
+            return self.documents.get(file_name)
+        
+        # Try semantic matching
+        if use_semantic and self.semantic_resolver:
+            matched_doc = self.semantic_resolver.find_document_by_semantic(
+                list(self.documents.keys()),
+                file_name
+            )
+            if matched_doc:
+                logger.info(f"Semantic document match: '{file_name}' -> '{matched_doc}'")
+                return self.documents.get(matched_doc)
+        
+        return None
     
     def get_all_documents(self) -> Dict[str, ExcelDocument]:
         """获取所有已加载的文档"""
@@ -770,19 +849,20 @@ class ExcelParser:
     
     def join_sheets(self, doc1_name: str, sheet1_name: str, 
                    doc2_name: str, sheet2_name: str,
-                   left_on: str, right_on: str, 
-                   how: str = 'inner') -> Optional[pd.DataFrame]:
+                   left_on: Optional[str] = None, right_on: Optional[str] = None, 
+                   how: str = 'inner', auto_discover: bool = True) -> Optional[pd.DataFrame]:
         """
-        跨文档关联工作表
+        跨文档关联工作表（支持自动发现关联键）
         
         Args:
             doc1_name: 第一个文档名
             sheet1_name: 第一个工作表名
             doc2_name: 第二个文档名
             sheet2_name: 第二个工作表名
-            left_on: 第一个表的关联键
-            right_on: 第二个表的关联键
+            left_on: 第一个表的关联键（可选，如果为None则自动发现）
+            right_on: 第二个表的关联键（可选，如果为None则自动发现）
             how: 关联方式 ('inner', 'left', 'right', 'outer')
+            auto_discover: 是否自动发现关联键（当left_on/right_on未指定时）
             
         Returns:
             关联后的DataFrame
@@ -799,6 +879,21 @@ class ExcelParser:
         
         if df1 is None or df2 is None:
             logger.error("工作表未找到")
+            return None
+        
+        # Auto-discover join keys if not provided
+        if (left_on is None or right_on is None) and auto_discover:
+            logger.info("自动发现关联键...")
+            discovered_keys = self.semantic_resolver.auto_discover_join_keys(df1, df2)
+            if discovered_keys:
+                left_on, right_on = discovered_keys
+                logger.info(f"自动发现的关联键: left_on='{left_on}', right_on='{right_on}'")
+            else:
+                logger.error("无法自动发现关联键，请手动指定 left_on 和 right_on")
+                return None
+        
+        if left_on is None or right_on is None:
+            logger.error("未指定关联键且自动发现失败")
             return None
         
         return self.joiner.join_tables(df1, df2, left_on, right_on, how)

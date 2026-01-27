@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 import logging
 from fiscal_mind.parser import ExcelDocument, ExcelParser
+from fiscal_mind.semantic_resolver import SemanticResolver
 
 logger = logging.getLogger(__name__)
 
@@ -221,54 +222,27 @@ class TableQueryHelper:
         return matching_cols
     
     @staticmethod
-    def find_column_by_semantic(df: pd.DataFrame, concept: str) -> List[str]:
+    def find_column_by_semantic(df: pd.DataFrame, concept: str, 
+                               semantic_resolver: Optional[SemanticResolver] = None) -> List[str]:
         """
-        通过语义关联查找列名（使用同义词映射）
+        通过语义关联查找列名（使用SemanticResolver）
         
         Args:
             df: DataFrame对象
             concept: 概念/语义描述
+            semantic_resolver: 语义解析器实例（可选，如果为None则创建新实例）
             
         Returns:
             匹配的列名列表
             
         Note:
-            这是一个简化的语义搜索实现，使用预定义的同义词映射。
-            在实际应用中，可以集成词向量或LLM进行更智能的匹配。
+            现在使用SemanticResolver进行高可信度的语义匹配。
+            支持静态同义词库和LLM保底机制。
         """
-        # 预定义的财务/业务领域同义词映射
-        synonym_map = {
-            '收入': ['收入', '营收', '销售额', '营业收入', '收益', '进账'],
-            '利润': ['利润', '盈利', '净利润', '毛利', '利益', '赚钱'],
-            '成本': ['成本', '费用', '开支', '支出', '花费'],
-            '销售': ['销售', '售出', '出售', '营业'],
-            '日期': ['日期', '时间', '年月', '期间'],
-            '数量': ['数量', '件数', '个数', '总数'],
-            '价格': ['价格', '单价', '金额', '售价'],
-            '部门': ['部门', '科室', '组织', '单位'],
-            '员工': ['员工', '人员', '职工', '工作人员'],
-            '工资': ['工资', '薪资', '薪酬', '报酬', '薪水'],
-        }
+        if semantic_resolver is None:
+            semantic_resolver = SemanticResolver()
         
-        concept_lower = concept.lower()
-        matching_cols = []
-        
-        # 直接匹配
-        for col in df.columns:
-            col_lower = str(col).lower()
-            if concept_lower in col_lower:
-                matching_cols.append(col)
-        
-        # 同义词匹配
-        for key, synonyms in synonym_map.items():
-            if concept_lower in [s.lower() for s in synonyms]:
-                for col in df.columns:
-                    col_lower = str(col).lower()
-                    if any(syn.lower() in col_lower for syn in synonyms):
-                        if col not in matching_cols:
-                            matching_cols.append(col)
-        
-        return matching_cols
+        return semantic_resolver.find_column_by_semantic(df, concept)
     
     @staticmethod
     def auto_detect_groupable_columns(df: pd.DataFrame, max_unique_ratio: float = 0.5) -> List[str]:
