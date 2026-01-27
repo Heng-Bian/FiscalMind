@@ -1,0 +1,17 @@
+# Core dependencies
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+
+# Excel processing
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+
+# LLM support (can be configured based on provider)
+langchain-openai>=0.2.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
