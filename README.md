@@ -73,6 +73,36 @@ pip install -r requirements.txt
 
 ## 快速开始 (Quick Start)
 
+### 最简单的方式 - 使用主程序 (Recommended)
+
+```bash
+# 1. 将您的Excel文件放置在项目根目录
+cp your_data.xlsx ./
+
+# 2. 运行主程序（自动加载当前目录所有Excel文件）
+python main.py
+```
+
+程序会自动：
+- 🔍 扫描并加载当前目录的所有Excel文件
+- 🤖 启动PRR Agent (Plan-ReAct-Reflect) 进行智能分析
+- 💬 进入交互模式，可以提问如"哪个大区表现更好？"
+
+**示例对话:**
+```
+FiscalMind> 哪个大区表现更好？
+正在分析您的问题...
+
+回答:
+问题: 哪个大区表现更好?
+分析结果:
+1. 识别包含区域(大区)数据的工作表
+2. 提取各个区域的关键业绩指标(如销售额、利润等)
+3. 比较各区域的表现
+
+结论: 根据分析，华东大区表现最佳。
+```
+
 ### 1. 创建示例Excel文件
 
 ```bash
@@ -85,7 +115,7 @@ python examples/create_samples.py
 - `sales_data.xlsx` - 销售数据
 - `employee_salary.xlsx` - 员工薪资
 
-### 2. 基础使用
+### 2. 基础使用（通过Python API）
 
 ```python
 from fiscal_mind.agent import TableDocumentAgent
@@ -108,12 +138,30 @@ response = agent.query("显示所有文档的统计信息")
 print(response)
 ```
 
-### 3. 交互模式
+### 3. 使用PRR Agent进行专业财务分析
+
+```python
+from fiscal_mind.prr_agent import PRRAgent
+
+# 创建PRR Agent (专为财务BP设计)
+agent = PRRAgent()
+
+# 加载文档
+agent.load_documents(['regional_performance.xlsx'])
+
+# 提问复杂的分析问题
+answer = agent.query("哪个大区今年表现更好？")
+print(answer)
+```
+
+### 4. 旧版交互模式（已过时）
 
 ```bash
 # 启动交互式界面
 python -m fiscal_mind.main examples/*.xlsx -i
 ```
+
+**注意**: 推荐使用新的 `python main.py`，它会自动加载当前目录的Excel文件。
 
 ## 核心模块说明 (Core Modules)
 
