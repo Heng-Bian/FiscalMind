@@ -50,7 +50,16 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **多维分析**: 支持销售额、利润率等多维度对比
 - ✅ **迭代优化**: 通过反思机制持续优化分析过程
 
-详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md)
+### 🆕 专业智能体架构 (v3.0)
+- ✅ **业务分析智能体**: 深入理解数据背后的业务逻辑和场景
+- ✅ **批评者智能体**: 评估分析质量，确保与问题匹配
+- ✅ **评判智能体**: 验证结论的合理性和数据支撑
+- ✅ **多轮协作**: 智能体之间可进行多轮协作优化
+- ✅ **质量保证**: 从业务逻辑、数据支撑等多维度评估
+- ✅ **深度思考**: AI思考过程更加系统化和专业化
+
+详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md) | [专业智能体文档](docs/SPECIALIZED_AGENTS.md)
+
 
 ## 技术栈 (Tech Stack)
 

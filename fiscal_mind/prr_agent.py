@@ -20,6 +20,12 @@ import json
 from fiscal_mind.parser import ExcelParser
 from fiscal_mind.meta_functions import TableMetaFunctions
 from fiscal_mind.tool_executor import ToolExecutor
+from fiscal_mind.specialized_agents import (
+    BusinessAnalysisAgent,
+    CriticAgent,
+    JudgmentAgent,
+    collaborate_business_and_critic
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,12 @@ class PRRAgentState(TypedDict):
     # Reflect相关
     reflections: List[str]  # 反思记录
     needs_replan: bool  # 是否需要重新规划
+    
+    # 专业智能体相关 (Specialized Agents)
+    business_analysis: Optional[Dict[str, Any]]  # 业务分析结果
+    critique_history: List[Dict[str, Any]]  # 批评历史
+    collaboration_rounds: int  # 协作轮数
+    judgment_result: Optional[Dict[str, Any]]  # 评判结果
     
     # 结果
     final_answer: Optional[str]  # 最终答案
@@ -79,24 +91,35 @@ class PRRAgent:
         self.tool_executor = ToolExecutor(self.parser)
         self.llm = llm
         self.max_iterations = max_iterations
+        
+        # 初始化专业智能体
+        self.business_agent = BusinessAnalysisAgent(llm=llm)
+        self.critic_agent = CriticAgent(llm=llm)
+        self.judgment_agent = JudgmentAgent(llm=llm)
+        
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
-        """构建PRR工作流图"""
+        """构建PRR工作流图，集成专业智能体"""
         workflow = StateGraph(PRRAgentState)
         
         # 添加节点
         workflow.add_node("load_context", self._load_context_node)
+        workflow.add_node("business_analysis", self._business_analysis_node)  # 新增：业务分析节点
         workflow.add_node("plan", self._plan_node)
         workflow.add_node("react", self._react_node)
         workflow.add_node("reflect", self._reflect_node)
         workflow.add_node("generate_answer", self._generate_answer_node)
+        workflow.add_node("judgment", self._judgment_node)  # 新增：评判节点
         
         # 设置入口点
         workflow.set_entry_point("load_context")
         
-        # 添加边
-        workflow.add_edge("load_context", "plan")
+        # 添加边 - 新的工作流：
+        # load_context -> business_analysis -> plan -> react -> reflect -> (continue/replan/finish)
+        # finish -> generate_answer -> judgment -> END
+        workflow.add_edge("load_context", "business_analysis")
+        workflow.add_edge("business_analysis", "plan")
         workflow.add_edge("plan", "react")
         workflow.add_edge("react", "reflect")
         
@@ -111,7 +134,8 @@ class PRRAgent:
             }
         )
         
-        workflow.add_edge("generate_answer", END)
+        workflow.add_edge("generate_answer", "judgment")  # 生成答案后进行评判
+        workflow.add_edge("judgment", END)
         
         return workflow.compile()
     
@@ -133,6 +157,10 @@ class PRRAgent:
                 "observations": [],
                 "reflections": [],
                 "needs_replan": False,
+                "business_analysis": None,  # 新增：初始化业务分析
+                "critique_history": [],  # 新增：初始化批评历史
+                "collaboration_rounds": 0,  # 新增：初始化协作轮数
+                "judgment_result": None,  # 新增：初始化评判结果
                 "iteration": 0,
                 "error": None
             }
@@ -143,26 +171,91 @@ class PRRAgent:
                 "error": f"加载上下文失败: {str(e)}"
             }
     
+    def _business_analysis_node(self, state: PRRAgentState) -> Dict[str, Any]:
+        """
+        业务分析节点: 使用业务分析智能体和批评者智能体协作分析业务场景
+        
+        这个节点会:
+        1. 使用业务分析智能体分析数据的业务含义
+        2. 使用批评者智能体评估分析是否匹配用户问题
+        3. 多轮协作直到达成满意的业务理解
+        """
+        logger.info("Business Analysis Agent & Critic Agent: Analyzing business context...")
+        
+        query = state["query"]
+        context = state.get("context", "")
+        observations = state.get("observations", [])
+        
+        # 提取示例数据
+        sample_data = []
+        for obs in observations[:3]:  # 使用前3个观察作为示例
+            result = obs.get("result", {})
+            if result.get("success"):
+                data = result.get("data", {})
+                if isinstance(data, dict) and "data" in data:
+                    items = data["data"]
+                    if isinstance(items, list):
+                        sample_data.extend(items[:2])  # 每个观察取2条
+        
+        # 如果还没有观察数据，从上下文中提取
+        if not sample_data:
+            # 简单提取上下文中的结构信息作为示例
+            sample_data = [{"context": context[:500]}]
+        
+        # 业务分析智能体和批评者智能体协作
+        business_analysis, critique_history = collaborate_business_and_critic(
+            business_agent=self.business_agent,
+            critic_agent=self.critic_agent,
+            user_query=query,
+            context=context,
+            sample_data=sample_data,
+            max_rounds=3  # 最多3轮协作
+        )
+        
+        # 记录业务分析结果
+        logger.info(f"Business Analysis completed:")
+        logger.info(f"  Domain: {business_analysis.get('business_domain', 'Unknown')}")
+        logger.info(f"  Key Dimensions: {', '.join(business_analysis.get('key_dimensions', []))}")
+        logger.info(f"  Key Metrics: {', '.join(business_analysis.get('key_metrics', []))}")
+        logger.info(f"  Analysis Scenarios: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+        logger.info(f"  Collaboration Rounds: {len(critique_history)}")
+        
+        # 添加业务分析作为反思
+        business_summary = (
+            f"业务分析: 这是{business_analysis.get('business_domain', '未知')}领域的数据，"
+            f"涉及{', '.join(business_analysis.get('key_dimensions', []))}等维度，"
+            f"需要关注{', '.join(business_analysis.get('key_metrics', []))}等指标。"
+            f"适用场景: {', '.join(business_analysis.get('analysis_scenarios', []))}"
+        )
+        
+        return {
+            "business_analysis": business_analysis,
+            "critique_history": critique_history,
+            "collaboration_rounds": len(critique_history),
+            "reflections": [business_summary]  # 将业务分析加入反思
+        }
+    
     def _plan_node(self, state: PRRAgentState) -> Dict[str, Any]:
         """
         Plan节点: 生成或更新执行计划
         
-        根据查询和当前上下文，生成一系列步骤来回答问题。
+        根据查询、业务分析和当前上下文，生成一系列步骤来回答问题。
         如果是重新规划，会考虑之前的观察和反思。
         """
-        logger.info("Planning...")
+        logger.info("Planning with business context...")
         
         query = state["query"]
         context = state.get("context", "")
         observations = state.get("observations", [])
         reflections = state.get("reflections", [])
+        business_analysis = state.get("business_analysis", {})
         
-        # 使用LLM生成计划（如果可用）
+        # 使用LLM生成计划（如果可用），并传入业务分析
         if self.llm:
-            plan = self._llm_generate_plan(query, context, observations, reflections)
+            plan = self._llm_generate_plan(query, context, observations, reflections, business_analysis)
         else:
-            # 基于规则的计划生成
-            plan = self._rule_based_generate_plan(query, context)
+            # 基于规则的计划生成，考虑业务分析
+            plan = self._rule_based_generate_plan(query, context, business_analysis)
         
         logger.info(f"Generated plan with {len(plan)} steps")
         for i, step in enumerate(plan, 1):
@@ -175,18 +268,29 @@ class PRRAgent:
         }
     
     def _llm_generate_plan(self, query: str, context: str, 
-                          observations: List[Dict], reflections: List[str]) -> List[str]:
-        """使用LLM生成执行计划"""
+                          observations: List[Dict], reflections: List[str],
+                          business_analysis: Dict[str, Any] = None) -> List[str]:
+        """使用LLM生成执行计划，结合业务分析"""
         if not self.llm:
-            return self._rule_based_generate_plan(query, context)
+            return self._rule_based_generate_plan(query, context, business_analysis)
         
         try:
             # 构建提示
             prompt_parts = [
-                "你是一个财务数据分析助手。请为以下查询生成一个执行计划。",
+                "你是一个资深的财务数据分析助手。请基于业务分析结果为以下查询生成一个执行计划。",
                 f"\n用户查询: {query}",
-                f"\n可用数据:\n{context[:1000]}...",  # 限制上下文长度
             ]
+            
+            # 添加业务分析上下文
+            if business_analysis:
+                prompt_parts.append("\n业务分析结果:")
+                prompt_parts.append(f"- 业务领域: {business_analysis.get('business_domain', '未知')}")
+                prompt_parts.append(f"- 关键维度: {', '.join(business_analysis.get('key_dimensions', []))}")
+                prompt_parts.append(f"- 关键指标: {', '.join(business_analysis.get('key_metrics', []))}")
+                prompt_parts.append(f"- 分析场景: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+                prompt_parts.append(f"- 业务背景: {business_analysis.get('business_context', '')[:200]}")
+            
+            prompt_parts.append(f"\n可用数据:\n{context[:1000]}...")  # 限制上下文长度
             
             if observations:
                 prompt_parts.append("\n已有观察:")
@@ -198,11 +302,12 @@ class PRRAgent:
                 for ref in reflections[-2:]:  # 只显示最近2个反思
                     prompt_parts.append(f"- {ref}")
             
-            prompt_parts.append("\n请生成3-5个步骤的执行计划，每步一行。只返回步骤列表，不要其他解释。")
+            prompt_parts.append("\n请基于业务分析生成3-5个步骤的执行计划，每步一行。只返回步骤列表，不要其他解释。")
+            prompt_parts.append("计划应该体现对业务的深入理解，不仅仅是简单的数据提取。")
             prompt_parts.append("示例格式:")
-            prompt_parts.append("1. 识别包含区域信息的数据表")
-            prompt_parts.append("2. 提取各区域的关键指标")
-            prompt_parts.append("3. 比较各区域的表现")
+            prompt_parts.append("1. 识别包含区域信息的数据表，如\"人员\"、\"医保\"、\"准入情况\"和\"费用效率分析\"")
+            prompt_parts.append("2. 从\"汇总\"表中提取各区域的预算、实际和差额数据作为核心表现指标")
+            prompt_parts.append("3. 结合\"医保\"和\"准入情况\"表，分析各区域的医院准入数量和医保覆盖情况")
             
             prompt = "\n".join(prompt_parts)
             
@@ -226,23 +331,32 @@ class PRRAgent:
             logger.error(f"LLM plan generation failed: {str(e)}")
         
         # 回退到规则方法
-        return self._rule_based_generate_plan(query, context)
+        return self._rule_based_generate_plan(query, context, business_analysis)
     
-    def _rule_based_generate_plan(self, query: str, context: str) -> List[str]:
-        """基于规则生成执行计划"""
+    def _rule_based_generate_plan(self, query: str, context: str, business_analysis: Dict[str, Any] = None) -> List[str]:
+        """基于规则生成执行计划，考虑业务分析"""
         query_lower = query.lower()
         plan = []
         
+        # 从业务分析中获取关键信息
+        key_dimensions = business_analysis.get('key_dimensions', []) if business_analysis else []
+        key_metrics = business_analysis.get('key_metrics', []) if business_analysis else []
+        business_domain = business_analysis.get('business_domain', '') if business_analysis else ''
+        
         # 检测查询类型并生成相应计划
         if any(word in query_lower for word in ["哪个", "which", "最好", "最差", "比较", "对比"]):
-            # 比较类查询
-            if any(word in query_lower for word in ["大区", "区域", "region"]):
+            # 比较类查询 - 使用业务分析增强
+            if any(word in query_lower for word in ["大区", "区域", "region"]) or "区域" in key_dimensions or "大区" in key_dimensions:
+                # 生成更通用的计划，不硬编码具体表名
+                dimension_name = "大区" if "大区" in key_dimensions else "区域"
+                metrics_str = "、".join(key_metrics[:3]) if key_metrics else "关键业绩指标"
+                
                 plan = [
-                    "识别包含区域(大区)数据的工作表",
-                    "提取各个区域的关键业绩指标(如销售额、利润等)",
-                    "计算各区域的总计或平均值",
-                    "比较各区域的表现，找出最优者",
-                    "生成详细的对比分析结果"
+                    f"识别包含{dimension_name}信息的数据表和工作表",
+                    f"提取各{dimension_name}的{metrics_str}等核心表现数据",
+                    f"分析各{dimension_name}在多个维度上的表现（如准入、覆盖率、效率等）",
+                    f"计算各{dimension_name}的综合得分和排名",
+                    f"确定表现最好的{dimension_name}并从业务角度解释原因"
                 ]
             elif any(word in query_lower for word in ["产品", "product"]):
                 plan = [
@@ -604,39 +718,107 @@ class PRRAgent:
         return "continue"
     
     def _generate_answer_node(self, state: PRRAgentState) -> Dict[str, Any]:
-        """生成最终答案"""
-        logger.info("Generating final answer...")
+        """生成最终答案，结合业务分析"""
+        logger.info("Generating final answer with business context...")
         
         query = state["query"]
         plan = state.get("plan", [])
         observations = state.get("observations", [])
         reflections = state.get("reflections", [])
+        business_analysis = state.get("business_analysis", {})
         
         # 使用LLM生成答案（如果可用）
         if self.llm:
-            answer = self._llm_generate_answer(query, plan, observations, reflections)
+            answer = self._llm_generate_answer(query, plan, observations, reflections, business_analysis)
         else:
-            answer = self._rule_based_generate_answer(query, plan, observations, reflections)
+            answer = self._rule_based_generate_answer(query, plan, observations, reflections, business_analysis)
         
         return {
             "final_answer": answer,
             "messages": [AIMessage(content=answer)]
         }
     
+    def _judgment_node(self, state: PRRAgentState) -> Dict[str, Any]:
+        """
+        评判节点: 使用评判智能体评估最终结论的合理性
+        
+        这个节点会:
+        1. 结合业务分析和最终结论
+        2. 验证结论与实际数据的一致性
+        3. 评估分析的质量和可信度
+        """
+        logger.info("Judgment Agent: Evaluating final conclusion...")
+        
+        query = state["query"]
+        business_analysis = state.get("business_analysis", {})
+        final_answer = state.get("final_answer", "")
+        observations = state.get("observations", [])
+        
+        # 提取实际数据
+        actual_data = []
+        for obs in observations:
+            result = obs.get("result", {})
+            if result.get("success"):
+                data = result.get("data", {})
+                if isinstance(data, dict) and "data" in data:
+                    items = data["data"]
+                    if isinstance(items, list):
+                        actual_data.extend(items[:3])  # 每个观察取3条
+        
+        # 使用评判智能体评估
+        judgment = self.judgment_agent.judge_conclusion(
+            user_query=query,
+            business_analysis=business_analysis,
+            final_conclusion=final_answer,
+            actual_data=actual_data
+        )
+        
+        # 记录评判结果
+        logger.info(f"Judgment completed:")
+        logger.info(f"  Overall Quality: {judgment.get('overall_quality', 0)}/10")
+        logger.info(f"  Answer Relevance: {judgment.get('answer_relevance', 0)}/10")
+        logger.info(f"  Data Support: {judgment.get('data_support', 0)}/10")
+        logger.info(f"  Business Logic: {judgment.get('business_logic', 0)}/10")
+        logger.info(f"  Is Acceptable: {judgment.get('is_acceptable', False)}")
+        
+        if judgment.get("strengths"):
+            logger.info(f"  Strengths: {', '.join(judgment['strengths'])}")
+        if judgment.get("weaknesses"):
+            logger.info(f"  Weaknesses: {', '.join(judgment['weaknesses'])}")
+        
+        # 如果有改进建议，记录下来
+        if judgment.get("improvement_suggestions"):
+            logger.info(f"  Improvement Suggestions:")
+            for suggestion in judgment["improvement_suggestions"]:
+                logger.info(f"    - {suggestion}")
+        
+        return {
+            "judgment_result": judgment
+        }
+    
     def _llm_generate_answer(self, query: str, plan: List[str], 
-                           observations: List[Dict], reflections: List[str]) -> str:
-        """使用LLM生成最终答案"""
+                           observations: List[Dict], reflections: List[str],
+                           business_analysis: Dict[str, Any] = None) -> str:
+        """使用LLM生成最终答案，结合业务分析"""
         if not self.llm:
-            return self._rule_based_generate_answer(query, plan, observations, reflections)
+            return self._rule_based_generate_answer(query, plan, observations, reflections, business_analysis)
         
         try:
             # 构建提示
             prompt_parts = [
-                "基于以下分析过程，请回答用户的问题。",
+                "你是一位资深的财务业务分析专家。基于业务分析和数据执行过程，请深入回答用户的问题。",
                 f"\n用户问题: {query}",
-                "\n执行计划:"
             ]
             
+            # 添加业务分析上下文
+            if business_analysis:
+                prompt_parts.append("\n业务背景:")
+                prompt_parts.append(f"- 业务领域: {business_analysis.get('business_domain', '未知')}")
+                prompt_parts.append(f"- 关键维度: {', '.join(business_analysis.get('key_dimensions', []))}")
+                prompt_parts.append(f"- 关键指标: {', '.join(business_analysis.get('key_metrics', []))}")
+                prompt_parts.append(f"- 业务场景: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+            
+            prompt_parts.append("\n执行计划:")
             for i, step in enumerate(plan, 1):
                 prompt_parts.append(f"{i}. {step}")
             
@@ -650,7 +832,13 @@ class PRRAgent:
                 for ref in reflections[-3:]:
                     prompt_parts.append(f"- {ref}")
             
-            prompt_parts.append("\n请基于以上信息，直接回答用户的问题。答案要简洁明了，包含具体数据。")
+            prompt_parts.append("\n请基于业务背景和数据分析，深入回答用户的问题。")
+            prompt_parts.append("要求:")
+            prompt_parts.append("1. 直接回答问题，明确指出结论")
+            prompt_parts.append("2. 提供具体的数据支撑")
+            prompt_parts.append("3. 从多个业务维度分析原因")
+            prompt_parts.append("4. 体现对业务逻辑的深入理解")
+            prompt_parts.append("5. 格式清晰，重点突出")
             
             prompt = "\n".join(prompt_parts)
             
@@ -659,10 +847,11 @@ class PRRAgent:
             
         except Exception as e:
             logger.error(f"LLM answer generation failed: {str(e)}")
-            return self._rule_based_generate_answer(query, plan, observations, reflections)
+            return self._rule_based_generate_answer(query, plan, observations, reflections, business_analysis)
     
     def _rule_based_generate_answer(self, query: str, plan: List[str],
-                                   observations: List[Dict], reflections: List[str]) -> str:
+                                   observations: List[Dict], reflections: List[str],
+                                   business_analysis: Dict[str, Any] = None) -> str:
         """基于规则生成答案"""
         answer_parts = []
         answer_parts.append(f"问题: {query}\n")
@@ -866,6 +1055,10 @@ class PRRAgent:
             "observations": [],
             "reflections": [],
             "needs_replan": False,
+            "business_analysis": None,  # 新增
+            "critique_history": [],  # 新增
+            "collaboration_rounds": 0,  # 新增
+            "judgment_result": None,  # 新增
             "final_answer": None,
             "error": None,
             "iteration": 0
