@@ -2,15 +2,17 @@
 专业智能体模块 - 业务分析、批评、和评判智能体
 Specialized Agents Module - Business Analysis, Critic, and Judgment Agents.
 
-这个模块包含三个专业智能体:
+这个模块包含四个专业智能体:
 1. BusinessAnalysisAgent (Agent A): 分析业务场景
 2. CriticAgent (Agent B): 批评和建议
 3. JudgmentAgent (Agent C): 评判结论的合理性
+4. HeaderDetectionAgent: 使用LLM检测表头，避免将数据行误判为表头
 """
 
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 import json
+import pandas as pd
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger(__name__)
@@ -602,3 +604,191 @@ def collaborate_business_and_critic(business_agent: BusinessAnalysisAgent,
             enhanced_context = context + suggestions_text
     
     return current_analysis, collaboration_history
+
+
+class HeaderDetectionAgent:
+    """
+    表头检测智能体
+    
+    职责:
+    - 使用LLM分析表格的前N行数据
+    - 智能识别哪些行是表头，哪些是数据行
+    - 避免将数据行误判为表头
+    - 支持多行表头的检测
+    """
+    
+    def __init__(self, llm=None):
+        """
+        初始化表头检测智能体
+        
+        Args:
+            llm: 语言模型实例，如果为None则使用规则基础方法
+        """
+        self.llm = llm
+    
+    def detect_header_rows(self, rows_data: List[List[Any]], max_rows: int = 10) -> Dict[str, Any]:
+        """
+        检测表头行
+        
+        Args:
+            rows_data: 表格的前N行数据（二维列表）
+            max_rows: 最多检查的行数，默认10行
+            
+        Returns:
+            包含以下字段的字典:
+            - header_row_count: 表头行数（从第0行开始算）
+            - header_rows_indices: 表头行的索引列表
+            - data_start_row: 数据开始的行索引
+            - confidence: 检测置信度 (0.0-1.0)
+            - reasoning: 检测理由
+        """
+        logger.info("HeaderDetectionAgent: Detecting header rows...")
+        
+        if self.llm:
+            return self._llm_detect_headers(rows_data, max_rows)
+        else:
+            return self._rule_based_detect_headers(rows_data, max_rows)
+    
+    def _llm_detect_headers(self, rows_data: List[List[Any]], max_rows: int) -> Dict[str, Any]:
+        """使用LLM检测表头"""
+        try:
+            # 限制行数
+            rows_to_analyze = rows_data[:max_rows]
+            
+            # 构建prompt
+            prompt_parts = [
+                "你是一位专业的数据分析专家。请分析以下表格的前若干行数据，识别哪些行是表头，哪些行是数据行。",
+                "\n重要提示:",
+                "- 表头通常包含列名、字段名等描述性文本",
+                "- 数据行通常包含具体的数值、名称、日期等实际数据",
+                "- 不要将数据行误判为表头",
+                "- 表头可能有多行（多层表头）",
+                "- 表头行必须是连续的，从第一行开始",
+                "\n表格数据（前{}行）:".format(len(rows_to_analyze))
+            ]
+            
+            # 添加每一行的数据
+            for i, row in enumerate(rows_to_analyze):
+                # 过滤None值并转换为字符串
+                row_str = [str(cell) if pd.notna(cell) else "" for cell in row]
+                # 过滤空字符串
+                non_empty = [cell for cell in row_str if cell.strip()]
+                
+                if non_empty:
+                    row_display = " | ".join(non_empty[:10])  # 最多显示10列
+                    if len(non_empty) > 10:
+                        row_display += " ..."
+                    prompt_parts.append(f"第{i}行: {row_display}")
+                else:
+                    prompt_parts.append(f"第{i}行: [空行]")
+            
+            prompt_parts.extend([
+                "\n请分析并以JSON格式回答，包含以下字段:",
+                "- header_row_count: 表头行数（整数，0表示没有表头）",
+                "- header_rows_indices: 表头行的索引列表（如 [0, 1] 表示第0行和第1行是表头）",
+                "- data_start_row: 数据开始的行索引（整数）",
+                "- confidence: 检测置信度（0.0-1.0之间的浮点数）",
+                "- reasoning: 你的判断理由（简短说明为什么这样判断）",
+                "\n示例输出:",
+                "{",
+                '  "header_row_count": 2,',
+                '  "header_rows_indices": [0, 1],',
+                '  "data_start_row": 2,',
+                '  "confidence": 0.9,',
+                '  "reasoning": "第0-1行包含字段名称，第2行开始是具体数据"',
+                "}"
+            ])
+            
+            prompt = "\n".join(prompt_parts)
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            result_text = response.content.strip()
+            
+            # 解析JSON响应
+            try:
+                # 提取JSON部分
+                if "```json" in result_text:
+                    json_start = result_text.find("```json") + 7
+                    json_end = result_text.find("```", json_start)
+                    result_text = result_text[json_start:json_end].strip()
+                elif "```" in result_text:
+                    json_start = result_text.find("```") + 3
+                    json_end = result_text.find("```", json_start)
+                    result_text = result_text[json_start:json_end].strip()
+                
+                result = json.loads(result_text)
+                
+                # 验证结果的有效性
+                if not isinstance(result.get("header_row_count"), int):
+                    raise ValueError("header_row_count must be an integer")
+                if not isinstance(result.get("header_rows_indices"), list):
+                    raise ValueError("header_rows_indices must be a list")
+                if not isinstance(result.get("data_start_row"), int):
+                    raise ValueError("data_start_row must be an integer")
+                
+                logger.info(f"HeaderDetectionAgent: Detected {result['header_row_count']} header rows with confidence {result.get('confidence', 0)}")
+                logger.info(f"HeaderDetectionAgent: {result.get('reasoning', '')}")
+                
+                return result
+                
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(f"Failed to parse LLM response: {str(e)}, falling back to rule-based")
+                return self._rule_based_detect_headers(rows_data, max_rows)
+                
+        except Exception as e:
+            logger.error(f"LLM header detection failed: {str(e)}, falling back to rule-based")
+            return self._rule_based_detect_headers(rows_data, max_rows)
+    
+    def _rule_based_detect_headers(self, rows_data: List[List[Any]], max_rows: int) -> Dict[str, Any]:
+        """基于规则的表头检测（作为后备方案）"""
+        logger.info("Using rule-based header detection")
+        
+        header_rows_indices = []
+        header_row_count = 0
+        
+        # 限制行数
+        rows_to_check = min(len(rows_data), max_rows)
+        
+        # 从第一行开始检查
+        for i in range(rows_to_check):
+            row = rows_data[i]
+            
+            # 过滤空值
+            non_empty = [v for v in row if pd.notna(v) and str(v).strip()]
+            
+            # 空行不是表头
+            if len(non_empty) == 0:
+                continue
+            
+            # 检查是否大部分是文本且不是数字
+            text_count = 0
+            for v in non_empty:
+                try:
+                    # 如果能转换为数字，可能不是表头
+                    float(str(v).replace('%', '').replace(',', '').replace('，', ''))
+                except (ValueError, AttributeError):
+                    text_count += 1
+            
+            # 如果至少50%是文本，可能是表头
+            text_ratio = text_count / len(non_empty) if non_empty else 0
+            
+            # 如果这行看起来像表头，且之前的行也是表头（或这是第一行）
+            if text_ratio >= 0.5 and (i == 0 or i == len(header_rows_indices)):
+                header_rows_indices.append(i)
+                header_row_count += 1
+            else:
+                # 遇到数据行，停止
+                break
+        
+        data_start_row = header_row_count
+        confidence = 0.6  # 规则基础方法的置信度较低
+        
+        reasoning = f"基于规则检测: 前{header_row_count}行包含较多文本字段，判断为表头"
+        
+        return {
+            "header_row_count": header_row_count,
+            "header_rows_indices": header_rows_indices,
+            "data_start_row": data_start_row,
+            "confidence": confidence,
+            "reasoning": reasoning
+        }
+
