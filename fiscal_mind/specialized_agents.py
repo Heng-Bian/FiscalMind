@@ -10,9 +10,26 @@ Specialized Agents Module - Business Analysis, Critic, and Judgment Agents.
 
 from typing import Dict, Any, List, Optional, Tuple
 import logging
+import json
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger(__name__)
+
+# 评分相关常量
+MATCH_SCORE_PER_MATCH = 3  # 每个匹配点的分值
+MIN_ACCEPTABLE_MATCH_SCORE = 6  # 可接受的最低匹配分数
+HIGH_MATCH_SCORE_THRESHOLD = 8  # 高匹配度阈值
+
+# 评判相关常量
+HIGH_ANSWER_RELEVANCE_SCORE = 8  # 明确回答问题的相关性分数
+DEFAULT_ANSWER_RELEVANCE_SCORE = 5  # 默认相关性分数
+HIGH_DATA_SUPPORT_SCORE = 8  # 有数据支撑的分数
+LOW_DATA_SUPPORT_SCORE = 4  # 缺少数据支撑的分数
+BASE_BUSINESS_LOGIC_SCORE = 5  # 业务逻辑基础分数
+METRIC_BONUS_SCORE = 2  # 每个提到的指标的奖励分数
+ACCEPTABLE_QUALITY_THRESHOLD = 6  # 可接受的质量阈值
+SHORT_CONCLUSION_LENGTH = 50  # 简短结论的字符数
+DETAILED_CONCLUSION_LENGTH = 200  # 详细结论的字符数
 
 
 class BusinessAnalysisAgent:
@@ -90,7 +107,6 @@ class BusinessAnalysisAgent:
             result_text = response.content.strip()
             
             # 尝试解析JSON
-            import json
             try:
                 # 提取JSON部分（如果被包裹在其他文本中）
                 if "```json" in result_text:
@@ -252,7 +268,6 @@ class CriticAgent:
             result_text = response.content.strip()
             
             # 解析JSON
-            import json
             try:
                 if "```json" in result_text:
                     json_start = result_text.find("```json") + 7
@@ -317,8 +332,8 @@ class CriticAgent:
             else:
                 gaps.append("缺少绩效对比分析场景")
         
-        # 计算匹配度
-        match_score = min(10, len(matches) * 3) if matches else 3
+        # 计算匹配度 (使用模块级常量)
+        match_score = min(10, len(matches) * MATCH_SCORE_PER_MATCH) if matches else MATCH_SCORE_PER_MATCH
         
         suggestions = []
         if gaps:
@@ -331,7 +346,7 @@ class CriticAgent:
             "matches": matches,
             "gaps": gaps,
             "suggestions": suggestions if suggestions else ["分析基本符合要求"],
-            "needs_refinement": match_score < 6,
+            "needs_refinement": match_score < MIN_ACCEPTABLE_MATCH_SCORE,
             "reasoning": f"匹配度评分 {match_score}/10, 基于 {len(matches)} 个匹配点"
         }
 
@@ -423,7 +438,6 @@ class JudgmentAgent:
             result_text = response.content.strip()
             
             # 解析JSON
-            import json
             try:
                 if "```json" in result_text:
                     json_start = result_text.find("```json") + 7
@@ -493,27 +507,27 @@ class JudgmentAgent:
         else:
             weaknesses.append("未充分分析关键业务指标")
         
-        # 检查结论长度
-        if len(final_conclusion) < 50:
+        # 检查结论长度 (使用模块级常量)
+        if len(final_conclusion) < SHORT_CONCLUSION_LENGTH:
             weaknesses.append("结论过于简单，缺少详细分析")
-        elif len(final_conclusion) > 200:
+        elif len(final_conclusion) > DETAILED_CONCLUSION_LENGTH:
             strengths.append("提供了详细的分析说明")
         
-        # 计算评分
-        answer_relevance = 8 if "明确给出了对比结论" in strengths else 5
-        data_support = 8 if has_numbers else 4
-        business_logic = min(10, 5 + len(mentioned_metrics) * 2)
-        comprehensiveness = min(10, 5 + len(mentioned_dims) + len(mentioned_metrics))
+        # 计算评分 (使用模块级常量)
+        answer_relevance = HIGH_ANSWER_RELEVANCE_SCORE if "明确给出了对比结论" in strengths else DEFAULT_ANSWER_RELEVANCE_SCORE
+        data_support = HIGH_DATA_SUPPORT_SCORE if has_numbers else LOW_DATA_SUPPORT_SCORE
+        business_logic = min(10, BASE_BUSINESS_LOGIC_SCORE + len(mentioned_metrics) * METRIC_BONUS_SCORE)
+        comprehensiveness = min(10, BASE_BUSINESS_LOGIC_SCORE + len(mentioned_dims) + len(mentioned_metrics))
         overall_quality = (answer_relevance + data_support + business_logic + comprehensiveness) / 4
         
-        is_acceptable = overall_quality >= 6 and len(weaknesses) <= len(strengths)
+        is_acceptable = overall_quality >= ACCEPTABLE_QUALITY_THRESHOLD and len(weaknesses) <= len(strengths)
         
         improvement_suggestions = []
         if not has_numbers:
             improvement_suggestions.append("建议在结论中加入具体的数据和数字")
         if len(mentioned_metrics) < 2:
             improvement_suggestions.append("建议从多个指标维度进行综合分析")
-        if len(final_conclusion) < 50:
+        if len(final_conclusion) < SHORT_CONCLUSION_LENGTH:
             improvement_suggestions.append("建议提供更详细的分析过程和理由")
         
         return {
@@ -555,12 +569,13 @@ def collaborate_business_and_critic(business_agent: BusinessAnalysisAgent,
     collaboration_history = []
     current_analysis = None
     previous_critiques = []
+    enhanced_context = context  # 增强的上下文，包含之前的反馈
     
     for round_num in range(1, max_rounds + 1):
         logger.info(f"Collaboration round {round_num}/{max_rounds}")
         
-        # 业务分析
-        current_analysis = business_agent.analyze_business_context(context, sample_data)
+        # 业务分析（使用增强的上下文）
+        current_analysis = business_agent.analyze_business_context(enhanced_context, sample_data)
         
         # 批评评估
         critique = critic_agent.critique_analysis(user_query, current_analysis, previous_critiques)
@@ -573,15 +588,17 @@ def collaborate_business_and_critic(business_agent: BusinessAnalysisAgent,
         })
         
         # 检查是否需要继续
-        if not critique.get("needs_refinement", False) or critique.get("match_score", 0) >= 8:
+        if not critique.get("needs_refinement", False) or critique.get("match_score", 0) >= HIGH_MATCH_SCORE_THRESHOLD:
             logger.info(f"Collaboration completed after {round_num} round(s)")
             break
         
-        # 准备下一轮
+        # 准备下一轮：增强上下文以包含批评建议
         previous_critiques.append(critique.get("reasoning", ""))
         
-        # 如果有建议，尝试改进上下文（实际应用中可以更复杂的改进逻辑）
+        # 将批评建议融入上下文，帮助下一轮分析改进
         if critique.get("suggestions"):
             logger.info(f"Applying suggestions: {critique['suggestions']}")
+            suggestions_text = "\n重要提示（基于前轮反馈）:\n" + "\n".join(f"- {s}" for s in critique['suggestions'])
+            enhanced_context = context + suggestions_text
     
     return current_analysis, collaboration_history

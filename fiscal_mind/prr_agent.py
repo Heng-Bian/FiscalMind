@@ -341,17 +341,22 @@ class PRRAgent:
         # 从业务分析中获取关键信息
         key_dimensions = business_analysis.get('key_dimensions', []) if business_analysis else []
         key_metrics = business_analysis.get('key_metrics', []) if business_analysis else []
+        business_domain = business_analysis.get('business_domain', '') if business_analysis else ''
         
         # 检测查询类型并生成相应计划
         if any(word in query_lower for word in ["哪个", "which", "最好", "最差", "比较", "对比"]):
             # 比较类查询 - 使用业务分析增强
             if any(word in query_lower for word in ["大区", "区域", "region"]) or "区域" in key_dimensions or "大区" in key_dimensions:
+                # 生成更通用的计划，不硬编码具体表名
+                dimension_name = "大区" if "大区" in key_dimensions else "区域"
+                metrics_str = "、".join(key_metrics[:3]) if key_metrics else "关键业绩指标"
+                
                 plan = [
-                    "识别包含区域(大区)数据的工作表，如\"人员\"、\"医保\"、\"准入情况\"和\"费用效率分析\"",
-                    "从\"汇总\"表中提取各区域的预算、实际和差额数据作为核心表现指标",
-                    "结合\"医保\"和\"准入情况\"表，分析各区域的医院准入数量和医保覆盖情况",
-                    "利用\"费用效率分析\"和\"人员\"表计算各区域的费用投入与产出效率",
-                    "综合各项指标对比分析，确定表现最好的大区并解释原因"
+                    f"识别包含{dimension_name}信息的数据表和工作表",
+                    f"提取各{dimension_name}的{metrics_str}等核心表现数据",
+                    f"分析各{dimension_name}在多个维度上的表现（如准入、覆盖率、效率等）",
+                    f"计算各{dimension_name}的综合得分和排名",
+                    f"确定表现最好的{dimension_name}并从业务角度解释原因"
                 ]
             elif any(word in query_lower for word in ["产品", "product"]):
                 plan = [
