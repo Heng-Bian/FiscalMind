@@ -254,18 +254,23 @@ class SemanticResolver:
         Returns:
             (left_on, right_on) 元组，如果未找到则返回None
         """
+        # 首先尝试精确匹配（即使有LLM也优先使用这个简单的逻辑）
+        common_cols = set(df1.columns) & set(df2.columns)
+        if common_cols:
+            # 优先选择包含"ID"、"编号"等关键词的列
+            for col in common_cols:
+                col_lower = str(col).lower()
+                if any(kw in col_lower for kw in ['id', '编号', 'code', 'key']):
+                    logger.info(f"Found exact join key: '{col}'")
+                    return (col, col)
+            # 如果没有ID类的，返回第一个公共列
+            col = list(common_cols)[0]
+            logger.info(f"Found common join key: '{col}'")
+            return (col, col)
+        
+        # 如果没有公共列，使用LLM
         if not self.llm:
-            logger.warning("No LLM provided, falling back to exact column match only")
-            # 如果没有LLM，只查找相同列名
-            common_cols = set(df1.columns) & set(df2.columns)
-            if common_cols:
-                for col in common_cols:
-                    col_lower = str(col).lower()
-                    if any(kw in col_lower for kw in ['id', '编号', 'code', 'key']):
-                        logger.info(f"Found exact join key: '{col}'")
-                        return (col, col)
-                col = list(common_cols)[0]
-                return (col, col)
+            logger.warning("No LLM provided and no common columns found")
             return None
         
         # 使用LLM进行关联键发现
