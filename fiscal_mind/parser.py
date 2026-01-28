@@ -162,11 +162,50 @@ class TableDetector:
         return cell.value
     
     @staticmethod
+    def _merge_multi_row_headers(header_rows: List[List[Any]], num_cols: int) -> List[str]:
+        """
+        合并多行表头
+        
+        Args:
+            header_rows: 表头行列表
+            num_cols: 列数
+            
+        Returns:
+            合并后的表头列表
+        """
+        merged_headers = []
+        for col_offset in range(num_cols):
+            header_parts = []
+            previous_value = None
+            
+            for row_offset in range(len(header_rows)):
+                value = header_rows[row_offset][col_offset]
+                
+                if pd.notna(value) and str(value).strip():
+                    value_str = str(value).strip()
+                    # 避免重复添加相同的值（合并单元格跨行时会重复）
+                    if value_str != previous_value:
+                        header_parts.append(value_str)
+                        previous_value = value_str
+            
+            # 使用连字符连接多层表头
+            if header_parts:
+                merged_header = '-'.join(header_parts)
+                merged_headers.append(merged_header)
+            else:
+                # 如果该列在所有表头行中都是空的，使用None
+                merged_headers.append(None)
+        
+        return merged_headers
+    
+    @staticmethod
     def _detect_multi_row_headers(ws, data_array: List[List[Any]], start_row: int, 
                                    start_col: int, end_col: int,
-                                   merged_cache: Optional[Dict[str, Any]] = None) -> Tuple[List[str], int]:
+                                   merged_cache: Optional[Dict[str, Any]] = None,
+                                   llm=None) -> Tuple[List[str], int]:
         """
         检测和处理多行表头，包括合并单元格
+        支持LLM增强的智能表头检测
         
         Args:
             ws: openpyxl工作表对象
@@ -175,15 +214,73 @@ class TableDetector:
             start_col: 起始列索引
             end_col: 结束列索引
             merged_cache: 合并单元格缓存（可选）
+            llm: 语言模型实例（可选，用于智能表头检测）
             
         Returns:
             (合并后的表头列表, 表头行数)
         """
         max_row = len(data_array)
-        header_rows = []
         num_cols = end_col - start_col + 1
         
-        # 检查后续几行是否也是表头的一部分
+        # 如果有LLM，使用智能表头检测
+        if llm:
+            try:
+                from fiscal_mind.specialized_agents import HeaderDetectionAgent
+                
+                # 准备数据：收集起始行及其后面的若干行（最多10行）
+                rows_to_check = []
+                max_rows_to_check = min(10, max_row - start_row)
+                
+                for row_offset in range(max_rows_to_check):
+                    row_idx = start_row + row_offset
+                    if row_idx >= max_row:
+                        break
+                    
+                    # 读取这一行的值（在指定的列范围内）
+                    row_values = []
+                    for col_offset in range(num_cols):
+                        col_idx = start_col + col_offset
+                        value = TableDetector._get_merged_cell_value(ws, row_idx, col_idx, merged_cache)
+                        row_values.append(value)
+                    rows_to_check.append(row_values)
+                
+                # 使用HeaderDetectionAgent进行智能检测
+                header_agent = HeaderDetectionAgent(llm=llm)
+                detection_result = header_agent.detect_header_rows(rows_to_check, max_rows=10)
+                
+                # 提取检测结果
+                header_row_count = detection_result.get('header_row_count', 0)
+                confidence = detection_result.get('confidence', 0.0)
+                
+                # 只有当置信度足够高时才使用LLM结果
+                if confidence >= 0.7 and header_row_count > 0:
+                    logger.info(f"Using LLM-based header detection: {header_row_count} header rows (confidence: {confidence:.2f})")
+                    
+                    # 收集表头行
+                    header_rows = []
+                    for row_offset in range(header_row_count):
+                        row_values = []
+                        for col_offset in range(num_cols):
+                            col_idx = start_col + col_offset
+                            value = TableDetector._get_merged_cell_value(ws, start_row + row_offset, col_idx, merged_cache)
+                            row_values.append(value)
+                        header_rows.append(row_values)
+                    
+                    # 如果只有一行表头，直接返回
+                    if header_row_count == 1:
+                        return header_rows[0], 1
+                    
+                    # 合并多行表头（使用helper方法）
+                    merged_headers = TableDetector._merge_multi_row_headers(header_rows, num_cols)
+                    return merged_headers, header_row_count
+                else:
+                    logger.info(f"LLM confidence too low ({confidence:.2f}), falling back to rule-based detection")
+                    
+            except Exception as e:
+                logger.warning(f"LLM-based header detection failed: {str(e)}, falling back to rule-based")
+        
+        # 使用规则基础的表头检测（原有逻辑）
+        header_rows = []
         current_row = start_row
         header_row_count = 0
         
@@ -215,30 +312,8 @@ class TableDetector:
         if header_row_count == 1:
             return header_rows[0], 1
         
-        # 合并多行表头
-        merged_headers = []
-        for col_offset in range(num_cols):
-            header_parts = []
-            previous_value = None
-            
-            for row_offset in range(header_row_count):
-                value = header_rows[row_offset][col_offset]
-                
-                if pd.notna(value) and str(value).strip():
-                    value_str = str(value).strip()
-                    # 避免重复添加相同的值（合并单元格跨行时会重复）
-                    if value_str != previous_value:
-                        header_parts.append(value_str)
-                        previous_value = value_str
-            
-            # 使用连字符连接多层表头
-            if header_parts:
-                merged_header = '-'.join(header_parts)
-                merged_headers.append(merged_header)
-            else:
-                # 如果该列在所有表头行中都是空的，使用None
-                merged_headers.append(None)
-        
+        # 合并多行表头（使用helper方法）
+        merged_headers = TableDetector._merge_multi_row_headers(header_rows, num_cols)
         return merged_headers, header_row_count
     
     @staticmethod
@@ -292,13 +367,14 @@ class TableDetector:
         return len(non_empty) > 0
     
     @staticmethod
-    def detect_tables(workbook_path: str, sheet_name: str) -> List[TableInfo]:
+    def detect_tables(workbook_path: str, sheet_name: str, llm=None) -> List[TableInfo]:
         """
         检测sheet中的所有表格
         
         Args:
             workbook_path: Excel文件路径
             sheet_name: 工作表名称
+            llm: 语言模型实例（可选，用于智能表头检测）
             
         Returns:
             检测到的表格信息列表
@@ -350,9 +426,9 @@ class TableDetector:
                 
                 # 检查这些单元格是否像表头
                 if len(potential_headers) >= MIN_TABLE_COLS and TableDetector._is_likely_header_row(potential_headers):
-                    # 使用多行表头检测
+                    # 使用多行表头检测（支持LLM增强）
                     headers, header_row_count = TableDetector._detect_multi_row_headers(
-                        ws, data_array, row_idx, start_col, end_col, merged_cache
+                        ws, data_array, row_idx, start_col, end_col, merged_cache, llm=llm
                     )
                     header_count = len(headers)
                     
@@ -433,7 +509,7 @@ class ExcelDocument:
     """表示单个Excel文档及其内容"""
     
     def __init__(self, file_path: str, detect_multiple_tables: bool = False, 
-                 semantic_resolver: Optional[SemanticResolver] = None):
+                 semantic_resolver: Optional[SemanticResolver] = None, llm=None):
         """
         初始化Excel文档
         
@@ -441,6 +517,7 @@ class ExcelDocument:
             file_path: Excel文件路径
             detect_multiple_tables: 是否检测多表格，默认False保持向后兼容
             semantic_resolver: 语义解析器实例（可选）
+            llm: 语言模型实例（可选，用于智能表头检测）
         """
         self.file_path = Path(file_path)
         self.file_name = self.file_path.name
@@ -448,6 +525,7 @@ class ExcelDocument:
         self.detect_multiple_tables = detect_multiple_tables
         self.multi_tables: Dict[str, List[TableInfo]] = {}  # 存储多表格信息
         self.semantic_resolver = semantic_resolver or SemanticResolver()
+        self.llm = llm
         self._load_document()
     
     def _load_document(self):
@@ -458,8 +536,8 @@ class ExcelDocument:
             
             for sheet_name in excel_file.sheet_names:
                 if self.detect_multiple_tables:
-                    # 使用多表格检测
-                    tables = TableDetector.detect_tables(str(self.file_path), sheet_name)
+                    # 使用多表格检测（传递LLM用于智能表头检测）
+                    tables = TableDetector.detect_tables(str(self.file_path), sheet_name, llm=self.llm)
                     
                     if len(tables) == 0:
                         # 如果没有检测到表格，使用默认方式读取
@@ -929,7 +1007,7 @@ class ExcelParser:
         
         Args:
             detect_multiple_tables: 是否检测sheet中的多个表格
-            llm: 语言模型实例（可选，用于语义匹配）
+            llm: 语言模型实例（可选，用于语义匹配和智能表头检测）
         """
         self.documents: Dict[str, ExcelDocument] = {}
         self.joiner = TableJoiner()
@@ -952,7 +1030,7 @@ class ExcelParser:
             detect_multiple_tables = self.detect_multiple_tables
         
         doc = ExcelDocument(file_path, detect_multiple_tables=detect_multiple_tables,
-                          semantic_resolver=self.semantic_resolver)
+                          semantic_resolver=self.semantic_resolver, llm=self.llm)
         self.documents[doc.file_name] = doc
         return doc
     

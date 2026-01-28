@@ -33,6 +33,12 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **描述提取**: 自动提取表格附近的描述文本
 - ✅ **向后兼容**: 默认关闭，不影响现有代码
 
+### 🆕 LLM智能表头检测 (v3.1)
+- ✅ **智能表头识别**: 使用大语言模型准确识别表头，避免将数据行误判为表头
+- ✅ **多行表头支持**: 智能处理多层表头结构
+- ✅ **高置信度检测**: 提供置信度评分，低置信度时自动fallback到规则方法
+- ✅ **灵活配置**: 可选择使用或不使用LLM，保持向后兼容
+
 ### 🆕 智能语义匹配 (v2.2)
 - ✅ **工作表语义匹配**: 自动识别"24年预算" → "FY24_Budget"
 - ✅ **列名智能匹配**: "薪资" → "月薪", "营收" → "销售额"
@@ -58,7 +64,7 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **质量保证**: 从业务逻辑、数据支撑等多维度评估
 - ✅ **深度思考**: AI思考过程更加系统化和专业化
 
-详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md) | [专业智能体文档](docs/SPECIALIZED_AGENTS.md)
+详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md) | [专业智能体文档](docs/SPECIALIZED_AGENTS.md) | [LLM表头检测文档](docs/LLM_HEADER_DETECTION.md)
 
 
 ## 技术栈 (Tech Stack)
