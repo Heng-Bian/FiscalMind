@@ -270,18 +270,6 @@ llm = ChatAnthropic(model="claude-3-opus")
 agent = PRRAgent(llm=llm)
 ```
 
-### 添加自定义工具
-
-```python
-from fiscal_mind.tools import register_tool
-
-@register_tool
-def custom_analysis_tool(data, params):
-    """自定义分析工具"""
-    # 实现自定义逻辑
-    return result
-```
-
 ## 贡献 (Contributing)
 
 欢迎提交 Issue 和 Pull Request！
