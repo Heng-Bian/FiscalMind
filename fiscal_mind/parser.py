@@ -738,12 +738,12 @@ class TableJoiner:
 class ExcelParser:
     """Excel文档解析器，支持处理多个文档"""
     
-    def __init__(self, detect_multiple_tables: bool = False, llm=None):
+    def __init__(self, detect_multiple_tables: bool = True, llm=None):
         """
         初始化解析器
         
         Args:
-            detect_multiple_tables: 是否检测sheet中的多个表格，默认False保持向后兼容
+            detect_multiple_tables: 是否检测sheet中的多个表格
             llm: 语言模型实例（可选，用于语义匹配）
         """
         self.documents: Dict[str, ExcelDocument] = {}

@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import List
 
+from langchain_openai import ChatOpenAI
+
 from fiscal_mind.prr_agent import PRRAgent
 
 # 配置日志
@@ -188,7 +190,10 @@ def main():
     
     # 创建PRR Agent
     print("\n正在初始化 PRR Agent (Plan-ReAct-Reflect)...")
-    agent = PRRAgent()
+    llm = ChatOpenAI(model="qwen-vl-max-2025-08-13",
+                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        api_key='YOUR_API_KEY_HERE')
+    agent = PRRAgent(llm=llm)
     
     # 加载Excel文档
     print(f"正在加载 {len(excel_files)} 个Excel文档...")
