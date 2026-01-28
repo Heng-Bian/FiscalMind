@@ -19,6 +19,85 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 
+class MockLLM:
+    """模拟LLM用于测试"""
+    
+    def invoke(self, messages):
+        """模拟LLM调用"""
+        class MockResponse:
+            def __init__(self, content):
+                self.content = content
+        
+        # 获取prompt内容
+        prompt = messages[0].content if messages else ""
+        
+        # 根据prompt类型返回相应的模拟响应
+        # 1. 列名匹配 (数据表上下文)
+        if "数据表上下文:" in prompt and "业务描述:" in prompt:
+            if "业务描述: \"姓名\"" in prompt:
+                return MockResponse("['姓名']")
+            elif "业务描述: \"员工\"" in prompt:
+                return MockResponse("['员工编号']")
+            elif "业务描述: \"薪资\"" in prompt:
+                return MockResponse("['月薪']")
+            elif "业务描述: \"营收\"" in prompt:
+                return MockResponse("['销售额']")
+            elif "业务描述: \"利润\"" in prompt:
+                return MockResponse("['净利润']")
+            else:
+                return MockResponse("[]")
+        
+        # 2. 工作表/文档名匹配 (可用的工作表)
+        elif "可用的工作表:" in prompt and "用户查询:" in prompt:
+            if "用户查询: \"24年的预算\"" in prompt or "用户查询: \"24年预算\"" in prompt:
+                if "FY24_Budget" in prompt:
+                    return MockResponse("FY24_Budget")
+                else:
+                    return MockResponse("2024年财务报表")
+            elif "用户查询: \"员工工资\"" in prompt:
+                return MockResponse("员工薪资_2024")
+            elif "用户查询: \"sales\"" in prompt:
+                return MockResponse("Sales_Q1")
+            elif "用户查询: \"报销单\"" in prompt:
+                return MockResponse("reimbursement_v2.xlsx")
+            elif "用户查询: \"工资\"" in prompt:
+                return MockResponse("employee_salary.xlsx")
+            elif "用户查询: \"员工\"" in prompt:
+                if "员工数据.xlsx" in prompt:
+                    return MockResponse("员工数据.xlsx")
+                elif "员工信息" in prompt:
+                    return MockResponse("员工信息")
+                else:
+                    return MockResponse("null")
+            else:
+                return MockResponse("null")
+        
+        # 3. 关联键发现 (两个数据表)
+        elif "请找出最适合用于关联" in prompt:
+            # 检查列名是否在上下文中
+            has_员工编号 = "列名: ['员工编号'" in prompt or '列名: ["员工编号"' in prompt
+            has_工号 = "列名: ['工号'" in prompt or '列名: ["工号"' in prompt
+            has_ID = "列名: ['ID'" in prompt or '列名: ["ID"' in prompt
+            has_code = "列名: ['code'" in prompt or '列名: ["code"' in prompt
+            has_num = "列名: ['num'" in prompt or '列名: ["num"' in prompt
+            
+            if has_员工编号 and has_工号:
+                return MockResponse("('员工编号', '工号')")
+            elif has_ID:
+                return MockResponse("('ID', 'ID')")
+            elif has_code and has_num:
+                return MockResponse("('code', 'num')")
+            else:
+                return MockResponse("null")
+        
+        # 默认返回
+        else:
+            return MockResponse("[]")
+    
+    def __call__(self, *args, **kwargs):
+        return self.invoke(*args, **kwargs)
+
+
 def create_test_data():
     """创建测试数据"""
     # Create test DataFrame
@@ -52,47 +131,56 @@ def test_column_semantic_matching():
     print("测试 1: 列名语义匹配")
     print("="*70)
     
-    resolver = SemanticResolver()
+    # 使用MockLLM进行测试
+    resolver = SemanticResolver(llm=MockLLM())
     df1, df2, df3 = create_test_data()
     
-    # Test 1.1: Exact match
+    # Test 1.1: Exact match (通过LLM)
     print("\n测试1.1: 精确匹配")
-    result = resolver.find_column_by_semantic(df1, '姓名', use_llm_fallback=False)
+    result = resolver.find_column_by_semantic(df1, '姓名')
     print(f"查找 '姓名': {result}")
     assert '姓名' in result, "精确匹配失败"
     print("✓ 精确匹配通过")
     
-    # Test 1.2: Synonym match
+    # Test 1.2: Synonym match (通过LLM)
     print("\n测试1.2: 同义词匹配")
-    result = resolver.find_column_by_semantic(df1, '员工', use_llm_fallback=False)
+    result = resolver.find_column_by_semantic(df1, '员工')
     print(f"查找 '员工': {result}")
-    # Should find '员工编号' because it contains '员工'
+    # Should find '员工编号' because LLM understands the semantic relationship
     assert len(result) > 0, "同义词匹配失败"
     print("✓ 同义词匹配通过")
     
-    # Test 1.3: Synonym match for salary
+    # Test 1.3: Synonym match for salary (通过LLM)
     print("\n测试1.3: 工资同义词匹配")
-    result = resolver.find_column_by_semantic(df1, '薪资', use_llm_fallback=False)
+    result = resolver.find_column_by_semantic(df1, '薪资')
     print(f"查找 '薪资': {result}")
-    # Should find '月薪' through synonym mapping
+    # Should find '月薪' through LLM semantic understanding
     assert len(result) > 0, "工资同义词匹配失败"
     print("✓ 工资同义词匹配通过")
     
-    # Test 1.4: Revenue synonym match
+    # Test 1.4: Revenue synonym match (通过LLM)
     print("\n测试1.4: 收入同义词匹配")
-    result = resolver.find_column_by_semantic(df3, '营收', use_llm_fallback=False)
+    result = resolver.find_column_by_semantic(df3, '营收')
     print(f"查找 '营收': {result}")
-    # Should find '销售额' through synonym mapping
+    # Should find '销售额' through LLM semantic understanding
     assert len(result) > 0, "营收同义词匹配失败"
     print("✓ 营收同义词匹配通过")
     
-    # Test 1.5: Profit synonym match
+    # Test 1.5: Profit synonym match (通过LLM)
     print("\n测试1.5: 利润同义词匹配")
-    result = resolver.find_column_by_semantic(df3, '利润', use_llm_fallback=False)
+    result = resolver.find_column_by_semantic(df3, '利润')
     print(f"查找 '利润': {result}")
-    # Should find '净利润'
+    # Should find '净利润' through LLM
     assert len(result) > 0, "利润同义词匹配失败"
     print("✓ 利润同义词匹配通过")
+    
+    # Test 1.6: Test without LLM (should only do exact match)
+    print("\n测试1.6: 无LLM时的精确匹配")
+    resolver_no_llm = SemanticResolver()  # No LLM
+    result = resolver_no_llm.find_column_by_semantic(df1, '姓名')
+    print(f"查找 '姓名' (无LLM): {result}")
+    assert '姓名' in result, "无LLM精确匹配失败"
+    print("✓ 无LLM精确匹配通过")
 
 
 def test_sheet_semantic_matching():
@@ -101,31 +189,31 @@ def test_sheet_semantic_matching():
     print("测试 2: 工作表名语义匹配")
     print("="*70)
     
-    resolver = SemanticResolver()
+    resolver = SemanticResolver(llm=MockLLM())
     
     sheet_names = ['2024年财务报表', 'FY24_Budget', '员工薪资_2024', 'Sales_Q1']
     
-    # Test 2.1: Partial match
+    # Test 2.1: Partial match (通过LLM)
     print("\n测试2.1: 部分匹配")
-    result = resolver.find_sheet_by_semantic(sheet_names, '24年的预算', use_llm_fallback=False)
+    result = resolver.find_sheet_by_semantic(sheet_names, '24年的预算')
     print(f"查找 '24年的预算': {result}")
-    # Should match 'FY24_Budget' or '2024年财务报表'
+    # Should match 'FY24_Budget' or '2024年财务报表' via LLM
     assert result is not None, "工作表部分匹配失败"
     print(f"✓ 匹配到: {result}")
     
-    # Test 2.2: Keyword match
+    # Test 2.2: Keyword match (通过LLM)
     print("\n测试2.2: 关键词匹配")
-    result = resolver.find_sheet_by_semantic(sheet_names, '员工工资', use_llm_fallback=False)
+    result = resolver.find_sheet_by_semantic(sheet_names, '员工工资')
     print(f"查找 '员工工资': {result}")
-    # Should match '员工薪资_2024'
+    # Should match '员工薪资_2024' via LLM
     assert result is not None, "工作表关键词匹配失败"
     print(f"✓ 匹配到: {result}")
     
-    # Test 2.3: English keyword match
+    # Test 2.3: English keyword match (通过LLM)
     print("\n测试2.3: 英文关键词匹配")
-    result = resolver.find_sheet_by_semantic(sheet_names, 'sales', use_llm_fallback=False)
+    result = resolver.find_sheet_by_semantic(sheet_names, 'sales')
     print(f"查找 'sales': {result}")
-    # Should match 'Sales_Q1'
+    # Should match 'Sales_Q1' via LLM
     assert result is not None, "英文关键词匹配失败"
     print(f"✓ 匹配到: {result}")
 
@@ -136,33 +224,34 @@ def test_join_key_auto_discovery():
     print("测试 3: 关联键自动发现")
     print("="*70)
     
-    resolver = SemanticResolver()
+    resolver = SemanticResolver(llm=MockLLM())
     df1, df2, df3 = create_test_data()
     
-    # Test 3.1: Exact column name match
+    # Test 3.1: Exact column name match (无LLM也应该工作)
     print("\n测试3.1: 同名列匹配")
     df_test1 = pd.DataFrame({'ID': [1, 2, 3], 'name': ['A', 'B', 'C']})
     df_test2 = pd.DataFrame({'ID': [1, 2, 3], 'value': [10, 20, 30]})
-    result = resolver.auto_discover_join_keys(df_test1, df_test2, use_llm_fallback=False)
+    result = resolver.auto_discover_join_keys(df_test1, df_test2)
     print(f"发现的关联键: {result}")
     assert result == ('ID', 'ID'), "同名列匹配失败"
     print("✓ 同名列匹配通过")
     
-    # Test 3.2: Synonym match (员工编号 vs 工号)
-    print("\n测试3.2: 同义词列匹配")
-    result = resolver.auto_discover_join_keys(df1, df2, use_llm_fallback=False)
+    # Test 3.2: Synonym match via LLM (员工编号 vs 工号)
+    print("\n测试3.2: 同义词列匹配 (通过LLM)")
+    result = resolver.auto_discover_join_keys(df1, df2)
     print(f"发现的关联键: {result}")
-    # Should find ('员工编号', '工号') as they are synonyms
+    # Should find ('员工编号', '工号') via LLM
     assert result is not None, "同义词列匹配失败"
+    assert result[0] == '员工编号' and result[1] == '工号', "关联键不正确"
     print(f"✓ 发现关联键: {result}")
     
-    # Test 3.3: Data overlap detection
-    print("\n测试3.3: 数据重叠检测")
+    # Test 3.3: Data overlap detection via LLM
+    print("\n测试3.3: 数据重叠检测 (通过LLM)")
     df_test3 = pd.DataFrame({'code': [1, 2, 3], 'name': ['A', 'B', 'C']})
     df_test4 = pd.DataFrame({'num': [1, 2, 3], 'value': [10, 20, 30]})
-    result = resolver.auto_discover_join_keys(df_test3, df_test4, use_llm_fallback=False)
+    result = resolver.auto_discover_join_keys(df_test3, df_test4)
     print(f"发现的关联键: {result}")
-    # Should find ('code', 'num') based on data overlap
+    # Should find ('code', 'num') via LLM analyzing the data
     assert result is not None, "数据重叠检测失败"
     print(f"✓ 发现关联键: {result}")
 
@@ -222,7 +311,8 @@ def test_parser_integration():
         with pd.ExcelWriter(file2, engine='openpyxl') as writer:
             df2.to_excel(writer, sheet_name='绩效评分', index=False)
         
-        parser = ExcelParser()
+        # 使用MockLLM创建parser
+        parser = ExcelParser(llm=MockLLM())
         
         # Test 5.1: Load documents
         print("\n测试5.1: 加载文档")
@@ -292,20 +382,20 @@ def test_document_name_matching():
     print("测试 6: 文档名称语义匹配")
     print("="*70)
     
-    resolver = SemanticResolver()
+    resolver = SemanticResolver(llm=MockLLM())
     
     doc_names = ['financial_report_2024.xlsx', 'reimbursement_v2.xlsx', 'employee_salary.xlsx']
     
-    # Test 6.1: Reimbursement matching
+    # Test 6.1: Reimbursement matching (通过LLM)
     print("\n测试6.1: 报销单匹配")
-    result = resolver.find_document_by_semantic(doc_names, '报销单', use_llm_fallback=False)
+    result = resolver.find_document_by_semantic(doc_names, '报销单')
     print(f"查找 '报销单': {result}")
     assert result is not None, "报销单匹配失败"
     print(f"✓ 匹配到: {result}")
     
-    # Test 6.2: Salary matching
+    # Test 6.2: Salary matching (通过LLM)
     print("\n测试6.2: 工资单匹配")
-    result = resolver.find_document_by_semantic(doc_names, '工资', use_llm_fallback=False)
+    result = resolver.find_document_by_semantic(doc_names, '工资')
     print(f"查找 '工资': {result}")
     assert result is not None, "工资单匹配失败"
     print(f"✓ 匹配到: {result}")
