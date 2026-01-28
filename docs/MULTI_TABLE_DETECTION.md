@@ -19,8 +19,8 @@ FiscalMind 现在支持在单个Excel工作表中检测和解析多个表格。�
 
 ### 向后兼容
 
-- 默认关闭多表格检测，保持原有行为
-- 通过参数启用新功能
+- 多表格检测现已默认启用，提供更强大的表格检测能力
+- 自动fallback到规则方法确保兼容性
 - 所有现有API保持不变
 
 ## 使用方法
@@ -30,8 +30,8 @@ FiscalMind 现在支持在单个Excel工作表中检测和解析多个表格。�
 ```python
 from fiscal_mind.parser import ExcelParser
 
-# 创建启用多表格检测的解析器
-parser = ExcelParser(detect_multiple_tables=True)
+# 创建解析器（多表格检测现已默认启用）
+parser = ExcelParser()
 
 # 加载Excel文档
 doc = parser.load_document('multi_table_file.xlsx')
@@ -72,15 +72,15 @@ print(f"描述: {table_info.description}")
 print(table_info.data)
 ```
 
-### 在文档级别启用
+### 在文档级别配置
 
 ```python
-# 为单个文档启用
-parser = ExcelParser()  # 默认不启用
-doc = parser.load_document('file.xlsx', detect_multiple_tables=True)
+# 使用默认配置（多表格检测已启用）
+parser = ExcelParser()
+doc = parser.load_document('file.xlsx')
 
-# 为所有文档启用
-parser = ExcelParser(detect_multiple_tables=True)
+# 如需禁用多表格检测
+parser = ExcelParser(detect_multiple_tables=False)
 docs = parser.load_documents(['file1.xlsx', 'file2.xlsx'])
 ```
 
@@ -88,12 +88,12 @@ docs = parser.load_documents(['file1.xlsx', 'file2.xlsx'])
 
 ### ExcelParser 类
 
-#### `__init__(detect_multiple_tables: bool = False)`
+#### `__init__(detect_multiple_tables: bool = True)`
 
 初始化解析器。
 
 **参数:**
-- `detect_multiple_tables`: 是否启用多表格检测，默认False
+- `detect_multiple_tables`: 是否启用多表格检测，默认True
 
 #### `load_document(file_path: str, detect_multiple_tables: Optional[bool] = None)`
 

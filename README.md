@@ -31,13 +31,13 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **多表格解析**: 自动检测单个sheet中的多个表格
 - ✅ **表格偏移识别**: 支持不从A1开始的表格
 - ✅ **描述提取**: 自动提取表格附近的描述文本
-- ✅ **向后兼容**: 默认关闭，不影响现有代码
+- ✅ **默认启用**: 现已默认开启，自动提供更强大的表格检测能力
 
 ### 🆕 LLM智能表头检测 (v3.1)
 - ✅ **智能表头识别**: 使用大语言模型准确识别表头，避免将数据行误判为表头
 - ✅ **多行表头支持**: 智能处理多层表头结构
 - ✅ **高置信度检测**: 提供置信度评分，低置信度时自动fallback到规则方法
-- ✅ **灵活配置**: 可选择使用或不使用LLM，保持向后兼容
+- ✅ **默认启用**: 当提供LLM时自动使用，未提供时使用规则方法
 
 ### 🆕 智能语义匹配 (v2.2)
 - ✅ **工作表语义匹配**: 自动识别"24年预算" → "FY24_Budget"
@@ -65,6 +65,26 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **深度思考**: AI思考过程更加系统化和专业化
 
 详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md) | [专业智能体文档](docs/SPECIALIZED_AGENTS.md) | [LLM表头检测文档](docs/LLM_HEADER_DETECTION.md)
+
+## ⚠️ 重要变更说明 (Important Changes)
+
+**多表格检测现已默认启用**: 从此版本开始，`ExcelDocument` 的 `detect_multiple_tables` 参数默认值已从 `False` 改为 `True`，以启用更强大的LLM相关机制。这意味着系统将自动检测并解析sheet中的多个表格、识别表格偏移、提取描述等。
+
+**如果您需要保持旧版本行为**: 如果您的现有代码依赖于简单的 `pd.read_excel()` 行为，请在升级后显式设置 `detect_multiple_tables=False`:
+
+```python
+# 方式1: 在ExcelParser级别禁用
+parser = ExcelParser(detect_multiple_tables=False)
+
+# 方式2: 在加载单个文档时禁用
+doc = parser.load_document('file.xlsx', detect_multiple_tables=False)
+
+# 方式3: 直接使用ExcelDocument时禁用
+from fiscal_mind.parser import ExcelDocument
+doc = ExcelDocument('file.xlsx', detect_multiple_tables=False)
+```
+
+**为什么做这个变更**: 这个变更使系统默认提供更智能的表格检测能力，特别是LLM增强的表头识别，让用户无需额外配置即可获得最佳体验。
 
 
 ## 技术栈 (Tech Stack)
@@ -315,8 +335,8 @@ print(analysis)
 ```python
 from fiscal_mind.parser import ExcelParser
 
-# 创建启用多表格检测的解析器
-parser = ExcelParser(detect_multiple_tables=True)
+# 创建解析器（多表格检测现已默认启用）
+parser = ExcelParser()
 
 # 加载包含多个表格的文件
 doc = parser.load_document('examples/multi_table_sheet.xlsx')

@@ -508,14 +508,14 @@ class TableDetector:
 class ExcelDocument:
     """表示单个Excel文档及其内容"""
     
-    def __init__(self, file_path: str, detect_multiple_tables: bool = False, 
+    def __init__(self, file_path: str, detect_multiple_tables: bool = True, 
                  semantic_resolver: Optional[SemanticResolver] = None, llm=None):
         """
         初始化Excel文档
         
         Args:
             file_path: Excel文件路径
-            detect_multiple_tables: 是否检测多表格，默认False保持向后兼容
+            detect_multiple_tables: 是否检测多表格，默认True启用多表格检测和LLM智能表头检测
             semantic_resolver: 语义解析器实例（可选）
             llm: 语言模型实例（可选，用于智能表头检测）
         """
