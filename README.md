@@ -66,6 +66,26 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 
 详细文档请查看: [新功能文档](docs/NEW_FEATURES.md) | [多表格检测文档](docs/MULTI_TABLE_DETECTION.md) | [语义匹配文档](docs/SEMANTIC_MATCHING.md) | [专业智能体文档](docs/SPECIALIZED_AGENTS.md) | [LLM表头检测文档](docs/LLM_HEADER_DETECTION.md)
 
+## ⚠️ 重要变更说明 (Important Changes)
+
+**多表格检测现已默认启用**: 从此版本开始，`ExcelDocument` 的 `detect_multiple_tables` 参数默认值已从 `False` 改为 `True`，以启用更强大的LLM相关机制。这意味着系统将自动检测并解析sheet中的多个表格、识别表格偏移、提取描述等。
+
+**如果您需要保持旧版本行为**: 如果您的现有代码依赖于简单的 `pd.read_excel()` 行为，请在升级后显式设置 `detect_multiple_tables=False`:
+
+```python
+# 方式1: 在ExcelParser级别禁用
+parser = ExcelParser(detect_multiple_tables=False)
+
+# 方式2: 在加载单个文档时禁用
+doc = parser.load_document('file.xlsx', detect_multiple_tables=False)
+
+# 方式3: 直接使用ExcelDocument时禁用
+from fiscal_mind.parser import ExcelDocument
+doc = ExcelDocument('file.xlsx', detect_multiple_tables=False)
+```
+
+**为什么做这个变更**: 这个变更使系统默认提供更智能的表格检测能力，特别是LLM增强的表头识别，让用户无需额外配置即可获得最佳体验。
+
 
 ## 技术栈 (Tech Stack)
 
