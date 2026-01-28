@@ -5,8 +5,12 @@ Semantic Resolver module - Provides LLM-based semantic matching capabilities.
 
 import pandas as pd
 from typing import List, Optional, Dict, Any, Tuple
+from difflib import SequenceMatcher
 import logging
+import os
+import re
 import ast
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -370,3 +374,190 @@ class SemanticResolver:
         """
         # 文档名匹配与工作表匹配逻辑相似
         return self.find_sheet_by_semantic(document_names, query, documents_context, use_llm_fallback)
+            
+            prompt = f"""Given the following sheet names:
+{sheet_names}
+
+The user query is: "{query}"
+
+Please return ONLY the most relevant sheet name from the list above.
+Return ONLY the sheet name, no explanation."""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            result = response.content.strip()
+            
+            # Validate
+            if result in sheet_names:
+                logger.info(f"LLM matched sheet: {result}")
+                return result
+                
+        except Exception as e:
+            logger.error(f"LLM sheet matching failed: {str(e)}")
+        
+        return None
+    
+    def _discover_join_keys_by_llm(self, df1: pd.DataFrame, df2: pd.DataFrame) -> Optional[Tuple[str, str]]:
+        """使用LLM发现关联键"""
+        if not self.llm:
+            return None
+            
+        try:
+            from langchain_core.messages import HumanMessage
+            
+            cols1 = list(df1.columns)
+            cols2 = list(df2.columns)
+            
+            # Sample data preview
+            preview1 = df1.head(3).to_dict('records')
+            preview2 = df2.head(3).to_dict('records')
+            
+            prompt = f"""Given two DataFrames:
+
+DataFrame 1 columns: {cols1}
+Sample data: {preview1}
+
+DataFrame 2 columns: {cols2}
+Sample data: {preview2}
+
+Please identify the best join keys for these two tables.
+Return ONLY a tuple in the format: ('left_key', 'right_key')
+For example: ('employee_id', 'emp_id')
+
+Return ONLY the tuple, no explanation."""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            result_text = response.content.strip()
+            
+            # Parse the response
+            try:
+                result = ast.literal_eval(result_text)
+                if isinstance(result, tuple) and len(result) == 2:
+                    left_key, right_key = result
+                    # Validate
+                    if left_key in cols1 and right_key in cols2:
+                        logger.info(f"LLM found join keys: {result}")
+                        return (left_key, right_key)
+            except:
+                logger.warning(f"Failed to parse LLM response: {result_text}")
+                
+        except Exception as e:
+            logger.error(f"LLM join key discovery failed: {str(e)}")
+        
+        return None
+    
+    def _are_synonyms(self, term1: str, term2: str) -> bool:
+        """检查两个术语是否是同义词"""
+        term1_lower = term1.lower().strip()
+        term2_lower = term2.lower().strip()
+        
+        for key, synonyms in self.SYNONYM_MAP.items():
+            synonyms_lower = [s.lower() for s in synonyms]
+            if term1_lower in synonyms_lower and term2_lower in synonyms_lower:
+                return True
+        
+        return False
+    
+    def _check_synonym_in_text(self, keyword: str, text: str) -> bool:
+        """检查关键词的同义词是否出现在文本中"""
+        keyword_lower = keyword.lower().strip()
+        text_lower = text.lower().strip()
+        
+        # Check if the keyword itself is in any synonym group
+        for key, synonyms in self.SYNONYM_MAP.items():
+            synonyms_lower = [s.lower() for s in synonyms]
+            if keyword_lower in synonyms_lower:
+                # Check if any synonym appears in the text
+                for syn in synonyms_lower:
+                    if syn in text_lower:
+                        return True
+        
+        return False
+    
+    def _compatible_types(self, dtype1, dtype2) -> bool:
+        """检查两个数据类型是否兼容（可以关联）"""
+        # Numeric types are compatible
+        numeric_types = ['int64', 'int32', 'float64', 'float32']
+        if str(dtype1) in numeric_types and str(dtype2) in numeric_types:
+            return True
+        
+        # String/object types are compatible
+        string_types = ['object', 'string']
+        if str(dtype1) in string_types and str(dtype2) in string_types:
+            return True
+        
+        return dtype1 == dtype2
+    
+    def _calculate_value_overlap(self, series1: pd.Series, series2: pd.Series, sample_size: int = 100) -> float:
+        """计算两个Series值的重叠度"""
+        # Sample for performance
+        s1_values = set(series1.dropna().head(sample_size).astype(str))
+        s2_values = set(series2.dropna().head(sample_size).astype(str))
+        
+        if not s1_values or not s2_values:
+            return 0.0
+        
+        intersection = s1_values & s2_values
+        union = s1_values | s2_values
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def _extract_keywords(self, text: str) -> List[str]:
+        """从文本中提取关键词"""
+        # Remove common words
+        common_words = {'的', '是', '在', '和', '与', '了', '这', '那', '有', '一', '个', '年',
+                       'the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at'}
+        
+        keywords = []
+        
+        # Extract numbers (including years like '24', '2024')
+        numbers = re.findall(r'\d+', text)
+        keywords.extend(numbers)
+        
+        # Extract Chinese characters (split by common words)
+        # First remove common words
+        text_cleaned = text
+        for word in ['的', '是', '在', '和', '与', '了', '这', '那', '年']:
+            text_cleaned = text_cleaned.replace(word, ' ')
+        
+        # Extract Chinese word sequences
+        chinese_words = re.findall(r'[\u4e00-\u9fff]+', text_cleaned)
+        keywords.extend(chinese_words)
+        
+        # For Chinese words, also try to extract known domain terms
+        # This helps match things like '员工工资' to '员工' and '工资'
+        for chinese_word in chinese_words:
+            # Check if this word contains known keywords from our synonym map
+            for key, synonyms in self.SYNONYM_MAP.items():
+                for syn in synonyms:
+                    if syn in chinese_word and syn != chinese_word and len(syn) >= 2:
+                        keywords.append(syn)
+        
+        # Extract English words
+        english_words = re.findall(r'[a-zA-Z]+', text.lower())
+        keywords.extend(english_words)
+        
+        # Filter out empty strings and duplicates, but keep order
+        seen = set()
+        filtered_keywords = []
+        for kw in keywords:
+            kw = kw.strip()
+            if kw and kw not in seen and kw not in common_words:
+                seen.add(kw)
+                filtered_keywords.append(kw)
+        
+        return filtered_keywords
+        
+        # Extract English words
+        english_words = re.findall(r'[a-zA-Z]+', text.lower())
+        keywords.extend(english_words)
+        
+        # Filter out empty strings and duplicates, but keep order
+        seen = set()
+        filtered_keywords = []
+        for kw in keywords:
+            kw = kw.strip()
+            if kw and kw not in seen and kw not in common_words:
+                seen.add(kw)
+                filtered_keywords.append(kw)
+        
+        return filtered_keywords
