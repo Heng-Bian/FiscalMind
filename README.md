@@ -31,13 +31,13 @@ FiscalMind is an intelligent table document analysis system built on the LangGra
 - ✅ **多表格解析**: 自动检测单个sheet中的多个表格
 - ✅ **表格偏移识别**: 支持不从A1开始的表格
 - ✅ **描述提取**: 自动提取表格附近的描述文本
-- ✅ **向后兼容**: 默认关闭，不影响现有代码
+- ✅ **默认启用**: 现已默认开启，自动提供更强大的表格检测能力
 
 ### 🆕 LLM智能表头检测 (v3.1)
 - ✅ **智能表头识别**: 使用大语言模型准确识别表头，避免将数据行误判为表头
 - ✅ **多行表头支持**: 智能处理多层表头结构
 - ✅ **高置信度检测**: 提供置信度评分，低置信度时自动fallback到规则方法
-- ✅ **灵活配置**: 可选择使用或不使用LLM，保持向后兼容
+- ✅ **默认启用**: 当提供LLM时自动使用，未提供时使用规则方法
 
 ### 🆕 智能语义匹配 (v2.2)
 - ✅ **工作表语义匹配**: 自动识别"24年预算" → "FY24_Budget"
@@ -315,8 +315,8 @@ print(analysis)
 ```python
 from fiscal_mind.parser import ExcelParser
 
-# 创建启用多表格检测的解析器
-parser = ExcelParser(detect_multiple_tables=True)
+# 创建解析器（多表格检测现已默认启用）
+parser = ExcelParser()
 
 # 加载包含多个表格的文件
 doc = parser.load_document('examples/multi_table_sheet.xlsx')

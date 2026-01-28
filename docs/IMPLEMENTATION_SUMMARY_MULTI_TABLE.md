@@ -10,7 +10,7 @@
 1. 自动检测单个sheet中的多个表格
 2. 识别表格的行列偏移（不从A1开始的表格）
 3. 提取表格附近的描述性文本
-4. 保持向后兼容性（默认关闭，不影响现有代码）
+4. 现已默认启用，提供更强大的表格检测能力
 
 ## 核心实现
 
@@ -62,7 +62,7 @@
 #### ExcelParser 类
 ```python
 # 新增参数
-def __init__(detect_multiple_tables: bool = False)
+def __init__(detect_multiple_tables: bool = True)  # 默认启用
 
 # 增强方法
 def load_document(file_path: str, detect_multiple_tables: Optional[bool] = None)
@@ -145,14 +145,14 @@ for table in summary['tables']:
 
 ## 性能考虑
 
-1. **按需启用**: 默认关闭，只在需要时启用
+1. **默认启用**: 现已默认开启，提供自动化的智能表格检测
 2. **单次扫描**: 一次性检测所有表格，避免重复扫描
 3. **早期终止**: 遇到明确边界时立即停止检测
 4. **内存效率**: 使用openpyxl的data_only模式，只读取值
 
 ## 向后兼容性
 
-1. **默认关闭**: `detect_multiple_tables=False`
+1. **默认启用**: `detect_multiple_tables=True`，可选择关闭
 2. **API兼容**: 现有方法行为不变
 3. **数据兼容**: `get_sheet()`返回第一个表格（或全部数据）
 4. **测试验证**: 所有现有测试无需修改即可通过
