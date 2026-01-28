@@ -725,6 +725,19 @@ class HeaderDetectionAgent:
                 if not isinstance(result.get("data_start_row"), int):
                     raise ValueError("data_start_row must be an integer")
                 
+                # 验证值的范围
+                if result.get("header_row_count", 0) < 0:
+                    raise ValueError("header_row_count must be non-negative")
+                if result.get("data_start_row", 0) < 0:
+                    raise ValueError("data_start_row must be non-negative")
+                
+                # 验证置信度范围
+                confidence = result.get("confidence", 0.0)
+                if not isinstance(confidence, (int, float)):
+                    raise ValueError("confidence must be a number")
+                if not (0.0 <= confidence <= 1.0):
+                    raise ValueError("confidence must be between 0.0 and 1.0")
+                
                 logger.info(f"HeaderDetectionAgent: Detected {result['header_row_count']} header rows with confidence {result.get('confidence', 0)}")
                 logger.info(f"HeaderDetectionAgent: {result.get('reasoning', '')}")
                 
@@ -772,7 +785,8 @@ class HeaderDetectionAgent:
             text_ratio = text_count / len(non_empty) if non_empty else 0
             
             # 如果这行看起来像表头，且之前的行也是表头（或这是第一行）
-            if text_ratio >= 0.5 and (i == 0 or i == len(header_rows_indices)):
+            # 确保表头行是连续的：header_row_count应该等于当前行索引i
+            if text_ratio >= 0.5 and (i == 0 or i == header_row_count):
                 header_rows_indices.append(i)
                 header_row_count += 1
             else:

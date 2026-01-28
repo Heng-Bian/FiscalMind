@@ -162,6 +162,43 @@ class TableDetector:
         return cell.value
     
     @staticmethod
+    def _merge_multi_row_headers(header_rows: List[List[Any]], num_cols: int) -> List[str]:
+        """
+        合并多行表头
+        
+        Args:
+            header_rows: 表头行列表
+            num_cols: 列数
+            
+        Returns:
+            合并后的表头列表
+        """
+        merged_headers = []
+        for col_offset in range(num_cols):
+            header_parts = []
+            previous_value = None
+            
+            for row_offset in range(len(header_rows)):
+                value = header_rows[row_offset][col_offset]
+                
+                if pd.notna(value) and str(value).strip():
+                    value_str = str(value).strip()
+                    # 避免重复添加相同的值（合并单元格跨行时会重复）
+                    if value_str != previous_value:
+                        header_parts.append(value_str)
+                        previous_value = value_str
+            
+            # 使用连字符连接多层表头
+            if header_parts:
+                merged_header = '-'.join(header_parts)
+                merged_headers.append(merged_header)
+            else:
+                # 如果该列在所有表头行中都是空的，使用None
+                merged_headers.append(None)
+        
+        return merged_headers
+    
+    @staticmethod
     def _detect_multi_row_headers(ws, data_array: List[List[Any]], start_row: int, 
                                    start_col: int, end_col: int,
                                    merged_cache: Optional[Dict[str, Any]] = None,
@@ -233,30 +270,8 @@ class TableDetector:
                     if header_row_count == 1:
                         return header_rows[0], 1
                     
-                    # 合并多行表头
-                    merged_headers = []
-                    for col_offset in range(num_cols):
-                        header_parts = []
-                        previous_value = None
-                        
-                        for row_offset in range(header_row_count):
-                            value = header_rows[row_offset][col_offset]
-                            
-                            if pd.notna(value) and str(value).strip():
-                                value_str = str(value).strip()
-                                # 避免重复添加相同的值（合并单元格跨行时会重复）
-                                if value_str != previous_value:
-                                    header_parts.append(value_str)
-                                    previous_value = value_str
-                        
-                        # 使用连字符连接多层表头
-                        if header_parts:
-                            merged_header = '-'.join(header_parts)
-                            merged_headers.append(merged_header)
-                        else:
-                            # 如果该列在所有表头行中都是空的，使用None
-                            merged_headers.append(None)
-                    
+                    # 合并多行表头（使用helper方法）
+                    merged_headers = TableDetector._merge_multi_row_headers(header_rows, num_cols)
                     return merged_headers, header_row_count
                 else:
                     logger.info(f"LLM confidence too low ({confidence:.2f}), falling back to rule-based detection")
@@ -297,30 +312,8 @@ class TableDetector:
         if header_row_count == 1:
             return header_rows[0], 1
         
-        # 合并多行表头
-        merged_headers = []
-        for col_offset in range(num_cols):
-            header_parts = []
-            previous_value = None
-            
-            for row_offset in range(header_row_count):
-                value = header_rows[row_offset][col_offset]
-                
-                if pd.notna(value) and str(value).strip():
-                    value_str = str(value).strip()
-                    # 避免重复添加相同的值（合并单元格跨行时会重复）
-                    if value_str != previous_value:
-                        header_parts.append(value_str)
-                        previous_value = value_str
-            
-            # 使用连字符连接多层表头
-            if header_parts:
-                merged_header = '-'.join(header_parts)
-                merged_headers.append(merged_header)
-            else:
-                # 如果该列在所有表头行中都是空的，使用None
-                merged_headers.append(None)
-        
+        # 合并多行表头（使用helper方法）
+        merged_headers = TableDetector._merge_multi_row_headers(header_rows, num_cols)
         return merged_headers, header_row_count
     
     @staticmethod
