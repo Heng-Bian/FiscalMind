@@ -3,12 +3,9 @@
 Create sample Excel files with complex headers (multi-row and hierarchical).
 """
 
-import pandas as pd
 from pathlib import Path
 import openpyxl
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.styles import Alignment
 
 examples_dir = Path(__file__).parent
 

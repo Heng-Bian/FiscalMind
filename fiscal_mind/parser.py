@@ -55,7 +55,8 @@ class TableDetector:
     
     @staticmethod
     def _collect_potential_headers_with_merges(ws, data_array: List[List[Any]], row_idx: int, 
-                                                start_col: int, max_col: int) -> Tuple[List[Any], int]:
+                                                start_col: int, max_col: int,
+                                                merged_cache: Optional[Dict[str, Any]] = None) -> Tuple[List[Any], int]:
         """
         收集潜在的表头，考虑合并单元格
         
@@ -65,6 +66,7 @@ class TableDetector:
             row_idx: 起始行索引
             start_col: 起始列索引
             max_col: 最大列数
+            merged_cache: 合并单元格缓存（可选）
             
         Returns:
             (表头列表, 结束列索引)
@@ -73,11 +75,10 @@ class TableDetector:
         temp_col = start_col
         empty_count = 0
         consecutive_empty = 0
-        row_data = data_array[row_idx]
         
         while temp_col < max_col:
             # 使用合并单元格值
-            value = TableDetector._get_merged_cell_value(ws, row_idx, temp_col)
+            value = TableDetector._get_merged_cell_value(ws, row_idx, temp_col, merged_cache)
             
             if pd.notna(value) and str(value).strip():
                 # 遇到非空单元格
@@ -98,11 +99,41 @@ class TableDetector:
                 if consecutive_empty > MAX_CONSECUTIVE_EMPTY_COLUMNS:
                     break
         
+        # 如果没有找到任何表头，返回空列表和start_col
+        if not potential_headers:
+            return [], start_col
+        
         end_col = start_col + len(potential_headers) - 1
         return potential_headers, end_col
     
     @staticmethod
-    def _get_merged_cell_value(ws, row_idx: int, col_idx: int) -> Any:
+    def _build_merged_cell_cache(ws) -> Dict[str, Any]:
+        """
+        构建合并单元格的缓存字典，提高查询性能
+        
+        Args:
+            ws: openpyxl工作表对象
+            
+        Returns:
+            字典，键为单元格坐标，值为合并区域左上角单元格的值
+        """
+        merged_cache = {}
+        for merged_range in ws.merged_cells.ranges:
+            # 获取左上角单元格的值
+            top_left_cell = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+            top_left_value = top_left_cell.value
+            
+            # 为合并区域内的所有单元格建立缓存
+            for row in range(merged_range.min_row, merged_range.max_row + 1):
+                for col in range(merged_range.min_col, merged_range.max_col + 1):
+                    cell_coord = ws.cell(row=row, column=col).coordinate
+                    merged_cache[cell_coord] = top_left_value
+        
+        return merged_cache
+    
+    @staticmethod
+    def _get_merged_cell_value(ws, row_idx: int, col_idx: int, 
+                               merged_cache: Optional[Dict[str, Any]] = None) -> Any:
         """
         获取合并单元格的值（从合并区域的左上角单元格获取）
         
@@ -110,13 +141,18 @@ class TableDetector:
             ws: openpyxl工作表对象
             row_idx: 行索引（0-based）
             col_idx: 列索引（0-based）
+            merged_cache: 合并单元格缓存（可选，用于性能优化）
             
         Returns:
             单元格的值
         """
         cell = ws.cell(row=row_idx + 1, column=col_idx + 1)  # openpyxl使用1-based索引
         
-        # 检查单元格是否是合并单元格的一部分
+        # 如果有缓存，直接从缓存获取
+        if merged_cache is not None and cell.coordinate in merged_cache:
+            return merged_cache[cell.coordinate]
+        
+        # 如果没有缓存，检查单元格是否是合并单元格的一部分
         for merged_range in ws.merged_cells.ranges:
             if cell.coordinate in merged_range:
                 # 返回合并区域左上角单元格的值
@@ -127,7 +163,8 @@ class TableDetector:
     
     @staticmethod
     def _detect_multi_row_headers(ws, data_array: List[List[Any]], start_row: int, 
-                                   start_col: int, end_col: int) -> Tuple[List[str], int]:
+                                   start_col: int, end_col: int,
+                                   merged_cache: Optional[Dict[str, Any]] = None) -> Tuple[List[str], int]:
         """
         检测和处理多行表头，包括合并单元格
         
@@ -137,6 +174,7 @@ class TableDetector:
             start_row: 起始行索引
             start_col: 起始列索引
             end_col: 结束列索引
+            merged_cache: 合并单元格缓存（可选）
             
         Returns:
             (合并后的表头列表, 表头行数)
@@ -158,7 +196,7 @@ class TableDetector:
             row_values = []
             for col_offset in range(num_cols):
                 col_idx = start_col + col_offset
-                value = TableDetector._get_merged_cell_value(ws, current_row + offset, col_idx)
+                value = TableDetector._get_merged_cell_value(ws, current_row + offset, col_idx, merged_cache)
                 row_values.append(value)
             
             # 如果这一行大部分是文本且不是数据行，可能是表头的一部分
@@ -169,9 +207,13 @@ class TableDetector:
                 # 如果遇到数据行，停止
                 break
         
+        # 如果没有检测到表头行，返回空列表和0
+        if header_row_count == 0:
+            return [], 0
+        
         # 如果只有一行表头，直接返回
-        if header_row_count <= 1:
-            return data_array[start_row][start_col:end_col + 1], 1
+        if header_row_count == 1:
+            return header_rows[0], 1
         
         # 合并多行表头
         merged_headers = []
@@ -274,6 +316,9 @@ class TableDetector:
             row_data = [cell.value for cell in row]
             data_array.append(row_data)
         
+        # 构建合并单元格缓存以提高性能
+        merged_cache = TableDetector._build_merged_cell_cache(ws)
+        
         tables = []
         processed_cells = set()  # 存储已处理的单元格坐标 (row, col)
         
@@ -290,7 +335,7 @@ class TableDetector:
                     continue
                 
                 # 跳过空单元格（使用合并单元格值检查）
-                cell_value = TableDetector._get_merged_cell_value(ws, row_idx, col_idx)
+                cell_value = TableDetector._get_merged_cell_value(ws, row_idx, col_idx, merged_cache)
                 if pd.isna(cell_value) or not str(cell_value).strip():
                     col_idx += 1
                     continue
@@ -300,14 +345,14 @@ class TableDetector:
                 
                 # 收集连续的非空单元格作为潜在表头（考虑合并单元格）
                 potential_headers, end_col = TableDetector._collect_potential_headers_with_merges(
-                    ws, data_array, row_idx, start_col, max_col
+                    ws, data_array, row_idx, start_col, max_col, merged_cache
                 )
                 
                 # 检查这些单元格是否像表头
                 if len(potential_headers) >= MIN_TABLE_COLS and TableDetector._is_likely_header_row(potential_headers):
                     # 使用多行表头检测
                     headers, header_row_count = TableDetector._detect_multi_row_headers(
-                        ws, data_array, row_idx, start_col, end_col
+                        ws, data_array, row_idx, start_col, end_col, merged_cache
                     )
                     header_count = len(headers)
                     
@@ -318,8 +363,8 @@ class TableDetector:
                     # 检查表头上方是否有描述（向上最多查找3行）
                     for desc_idx in range(max(0, row_idx - MAX_DESCRIPTION_SEARCH_ROWS), row_idx):
                         desc_row = data_array[desc_idx]
-                        # 只检查相同列区域的描述
-                        for check_col in range(start_col, min(end_col + 2, max_col)):
+                        # 只检查相同列区域的描述（额外检查一列以防描述略微超出表格）
+                        for check_col in range(start_col, min(end_col + 1, max_col)):
                             if pd.notna(desc_row[check_col]) and str(desc_row[check_col]).strip():
                                 cell_str = str(desc_row[check_col]).strip()
                                 # 如果文本较长且包含中文或特殊字符，可能是描述
