@@ -87,7 +87,7 @@ class PRRAgent:
             llm: 语言模型实例（用于增强计划生成和反思）
             max_iterations: 最大迭代次数
         """
-        self.parser = parser or ExcelParser()
+        self.parser = parser or ExcelParser(llm=llm, detect_multiple_tables=True)
         self.tool_executor = ToolExecutor(self.parser)
         self.llm = llm
         self.max_iterations = max_iterations
@@ -215,17 +215,17 @@ class PRRAgent:
         # 记录业务分析结果
         logger.info(f"Business Analysis completed:")
         logger.info(f"  Domain: {business_analysis.get('business_domain', 'Unknown')}")
-        logger.info(f"  Key Dimensions: {', '.join(business_analysis.get('key_dimensions', []))}")
-        logger.info(f"  Key Metrics: {', '.join(business_analysis.get('key_metrics', []))}")
-        logger.info(f"  Analysis Scenarios: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+        logger.info(f"  Key Dimensions: {', '.join(map(str, business_analysis.get('key_dimensions', [])))}")
+        logger.info(f"  Key Metrics: {', '.join(map(str, business_analysis.get('key_metrics', [])))}")
+        logger.info(f"  Analysis Scenarios: {', '.join(map(str, business_analysis.get('analysis_scenarios', [])))}")
         logger.info(f"  Collaboration Rounds: {len(critique_history)}")
         
         # 添加业务分析作为反思
         business_summary = (
             f"业务分析: 这是{business_analysis.get('business_domain', '未知')}领域的数据，"
-            f"涉及{', '.join(business_analysis.get('key_dimensions', []))}等维度，"
-            f"需要关注{', '.join(business_analysis.get('key_metrics', []))}等指标。"
-            f"适用场景: {', '.join(business_analysis.get('analysis_scenarios', []))}"
+            f"涉及{', '.join(map(str, business_analysis.get('key_dimensions', [])))}等维度，"
+            f"需要关注{', '.join(map(str, business_analysis.get('key_metrics', [])))}等指标。"
+            f"适用场景: {', '.join(map(str, business_analysis.get('analysis_scenarios', [])))}"
         )
         
         return {
@@ -285,9 +285,9 @@ class PRRAgent:
             if business_analysis:
                 prompt_parts.append("\n业务分析结果:")
                 prompt_parts.append(f"- 业务领域: {business_analysis.get('business_domain', '未知')}")
-                prompt_parts.append(f"- 关键维度: {', '.join(business_analysis.get('key_dimensions', []))}")
-                prompt_parts.append(f"- 关键指标: {', '.join(business_analysis.get('key_metrics', []))}")
-                prompt_parts.append(f"- 分析场景: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+                prompt_parts.append(f"- 关键维度: {', '.join(map(str, business_analysis.get('key_dimensions', [])))}")
+                prompt_parts.append(f"- 关键指标: {', '.join(map(str, business_analysis.get('key_metrics', [])))}")
+                prompt_parts.append(f"- 分析场景: {', '.join(map(str, business_analysis.get('analysis_scenarios', [])))}")
                 prompt_parts.append(f"- 业务背景: {business_analysis.get('business_context', '')[:200]}")
             
             prompt_parts.append(f"\n可用数据:\n{context[:1000]}...")  # 限制上下文长度
@@ -782,9 +782,9 @@ class PRRAgent:
         logger.info(f"  Is Acceptable: {judgment.get('is_acceptable', False)}")
         
         if judgment.get("strengths"):
-            logger.info(f"  Strengths: {', '.join(judgment['strengths'])}")
+            logger.info(f"  Strengths: {', '.join(map(str, judgment['strengths']))}")
         if judgment.get("weaknesses"):
-            logger.info(f"  Weaknesses: {', '.join(judgment['weaknesses'])}")
+            logger.info(f"  Weaknesses: {', '.join(map(str, judgment['weaknesses']))}")
         
         # 如果有改进建议，记录下来
         if judgment.get("improvement_suggestions"):
@@ -814,9 +814,9 @@ class PRRAgent:
             if business_analysis:
                 prompt_parts.append("\n业务背景:")
                 prompt_parts.append(f"- 业务领域: {business_analysis.get('business_domain', '未知')}")
-                prompt_parts.append(f"- 关键维度: {', '.join(business_analysis.get('key_dimensions', []))}")
-                prompt_parts.append(f"- 关键指标: {', '.join(business_analysis.get('key_metrics', []))}")
-                prompt_parts.append(f"- 业务场景: {', '.join(business_analysis.get('analysis_scenarios', []))}")
+                prompt_parts.append(f"- 关键维度: {', '.join(map(str, business_analysis.get('key_dimensions', [])))}")
+                prompt_parts.append(f"- 关键指标: {', '.join(map(str, business_analysis.get('key_metrics', [])))}")
+                prompt_parts.append(f"- 业务场景: {', '.join(map(str, business_analysis.get('analysis_scenarios', [])))}")
             
             prompt_parts.append("\n执行计划:")
             for i, step in enumerate(plan, 1):

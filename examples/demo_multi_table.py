@@ -46,7 +46,7 @@ def demo_multi_table_detection():
         print(f"\n表格 #{table_info['index']} - {table_info['description'] or '无描述'}")
         print(f"  位置: {table_info['position']}")
         print(f"  大小: {table_info['shape'][0]} 行 x {table_info['shape'][1]} 列")
-        print(f"  列名: {', '.join(table_info['columns'])}")
+        print(f"  列名: {', '.join(map(str, table_info['columns']))}")
     
     # 5. 访问和使用具体表格的数据
     print("\n【步骤5】访问和处理表格数据")

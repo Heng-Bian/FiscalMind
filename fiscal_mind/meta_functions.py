@@ -109,7 +109,7 @@ class TableMetaFunctions:
         """
         lines = []
         lines.append(f"表格形状: {len(df)} 行 x {len(df.columns)} 列")
-        lines.append(f"列名: {', '.join(df.columns.tolist())}")
+        lines.append(f"列名: {', '.join(map(str, df.columns.tolist()))}")
         lines.append("\n数据预览:")
         lines.append(df.head(max_rows).to_string())
         
@@ -158,19 +158,19 @@ class TableMetaFunctions:
         lines = []
         lines.append(f"文档名称: {doc.file_name}")
         lines.append(f"工作表数量: {len(doc.sheets)}")
-        lines.append(f"工作表名称: {', '.join(doc.get_sheet_names())}")
+        lines.append(f"工作表名称: {', '.join(map(str, doc.get_sheet_names()))}")
         lines.append("")
         
         for sheet_name in doc.get_sheet_names():
             df = doc.get_sheet(sheet_name)
             lines.append(f"工作表: {sheet_name}")
             lines.append(f"  - 形状: {len(df)} 行 x {len(df.columns)} 列")
-            lines.append(f"  - 列名: {', '.join(df.columns.tolist())}")
+            lines.append(f"  - 列名: {', '.join(map(str, df.columns.tolist()))}")
             
             # 显示数值列
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
             if numeric_cols:
-                lines.append(f"  - 数值列: {', '.join(numeric_cols)}")
+                lines.append(f"  - 数值列: {', '.join(map(str, numeric_cols))}")
             lines.append("")
         
         return "\n".join(lines)

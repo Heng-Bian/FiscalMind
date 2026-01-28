@@ -182,9 +182,9 @@ class BusinessAnalysisAgent:
             "business_domain": business_domain,
             "key_dimensions": key_dimensions,
             "key_metrics": key_metrics,
-            "business_relationships": f"这是{business_domain}领域的数据，主要维度包括{', '.join(key_dimensions)}",
+            "business_relationships": f"这是{business_domain}领域的数据，主要维度包括{', '.join(map(str, key_dimensions))}",
             "analysis_scenarios": analysis_scenarios if analysis_scenarios else ["综合分析"],
-            "business_context": f"数据涉及{business_domain}，可能需要从{', '.join(key_metrics)}等指标进行分析",
+            "business_context": f"数据涉及{business_domain}，可能需要从{', '.join(map(str, key_metrics))}等指标进行分析",
             "confidence_level": "medium"
         }
 
