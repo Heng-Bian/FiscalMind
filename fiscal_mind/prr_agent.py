@@ -346,40 +346,17 @@ class PRRAgent:
         # 检测查询类型并生成相应计划
         if any(word in query_lower for word in ["哪个", "which", "最好", "最差", "比较", "对比"]):
             # 比较类查询 - 使用业务分析增强
-            if any(word in query_lower for word in ["大区", "区域", "region"]) or "区域" in key_dimensions or "大区" in key_dimensions:
-                # 生成更通用的计划，不硬编码具体表名
-                dimension_name = "大区" if "大区" in key_dimensions else "区域"
-                metrics_str = "、".join(key_metrics[:3]) if key_metrics else "关键业绩指标"
-                
-                plan = [
-                    f"识别包含{dimension_name}信息的数据表和工作表",
-                    f"提取各{dimension_name}的{metrics_str}等核心表现数据",
-                    f"分析各{dimension_name}在多个维度上的表现（如准入、覆盖率、效率等）",
-                    f"计算各{dimension_name}的综合得分和排名",
-                    f"确定表现最好的{dimension_name}并从业务角度解释原因"
-                ]
-            elif any(word in query_lower for word in ["产品", "product"]):
-                plan = [
-                    "识别包含产品数据的工作表",
-                    "提取各产品的销售和利润数据",
-                    "计算产品的关键指标",
-                    "排序并找出表现最好的产品"
-                ]
-            elif any(word in query_lower for word in ["部门", "department"]):
-                plan = [
-                    "识别包含部门数据的工作表",
-                    "汇总各部门的业绩数据",
-                    "比较部门表现",
-                    "生成排名结果"
-                ]
-            else:
-                # 通用比较
-                plan = [
-                    "分析查询中的比较维度",
-                    "获取相关数据",
-                    "执行比较分析",
-                    "总结结果"
-                ]
+            # 尝试从业务分析中提取维度名称，而不是硬编码
+            dimension_name = key_dimensions[0] if key_dimensions else "分析维度"
+            metrics_str = "、".join(key_metrics[:3]) if key_metrics else "关键业绩指标"
+            
+            plan = [
+                f"识别包含{dimension_name}信息的数据表和工作表",
+                f"提取各{dimension_name}的{metrics_str}等核心表现数据",
+                f"分析各{dimension_name}在多个维度上的表现",
+                f"计算各{dimension_name}的综合得分和排名",
+                f"确定表现最好的{dimension_name}并从业务角度解释原因"
+            ]
         
         elif any(word in query_lower for word in ["统计", "汇总", "总计", "sum", "total"]):
             # 统计类查询
@@ -485,6 +462,104 @@ class PRRAgent:
         Returns:
             (thought, action): 思考过程和要执行的动作
         """
+        # 使用LLM进行推理（如果可用）
+        if self.llm:
+            return self._llm_reason_and_act(step_description, query, context, observations)
+        else:
+            return self._rule_based_reason_and_act(step_description, query, context, observations)
+    
+    def _llm_reason_and_act(self, step_description: str, query: str, 
+                           context: str, observations: List[Dict]) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        使用LLM进行推理并决定行动（标准ReAct范式）
+        
+        Returns:
+            (thought, action): 思考过程和要执行的动作
+        """
+        try:
+            # 构建可用工具的描述
+            available_tools = self._get_available_tools_description()
+            
+            # 构建观察历史摘要
+            observations_summary = self._format_observations_for_llm(observations)
+            
+            # 构建提示词
+            prompt_parts = [
+                "你是一个智能数据分析助手。你需要根据当前步骤、上下文和可用工具来决定下一步的思考和行动。",
+                f"\n用户查询: {query}",
+                f"\n当前执行步骤: {step_description}",
+                f"\n数据上下文:\n{context[:1500]}",  # 限制长度
+            ]
+            
+            if observations_summary:
+                prompt_parts.append(f"\n之前的观察结果:\n{observations_summary}")
+            
+            prompt_parts.extend([
+                "\n可用工具:",
+                available_tools,
+                "\n请分析当前步骤，并决定:",
+                "1. Thought (思考): 分析当前步骤需要做什么，为什么需要这样做",
+                "2. Action (行动): 选择最合适的工具和参数来执行",
+                "\n请以JSON格式回答，包含以下字段:",
+                "{",
+                '  "thought": "你的思考过程",',
+                '  "action": {',
+                '    "name": "工具名称",',
+                '    "parameters": {参数对象}',
+                "  }",
+                "}",
+                "\n如果当前步骤不需要执行任何工具，可以将action设为null。"
+            ])
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # 调用LLM
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            result_text = response.content.strip()
+            
+            # 解析响应
+            # 尝试提取JSON
+            if "```json" in result_text:
+                json_start = result_text.find("```json") + 7
+                json_end = result_text.find("```", json_start)
+                result_text = result_text[json_start:json_end].strip()
+            elif "```" in result_text:
+                json_start = result_text.find("```") + 3
+                json_end = result_text.find("```", json_start)
+                result_text = result_text[json_start:json_end].strip()
+            
+            result = json.loads(result_text)
+            
+            # 验证响应结构
+            if not isinstance(result, dict):
+                logger.warning("LLM返回的不是字典结构，使用规则方法")
+                raise ValueError("Invalid response structure")
+            
+            thought = result.get("thought")
+            action = result.get("action")
+            
+            # 验证必需字段
+            if not thought:
+                logger.warning("LLM响应缺少thought字段，使用默认值")
+                thought = f"当前步骤: {step_description}"
+            
+            # action可以为None，表示不需要执行工具
+            
+            return thought, action
+            
+        except Exception as e:
+            logger.error(f"LLM推理失败: {str(e)}")
+            # 降级到规则基础的方法
+            return self._rule_based_reason_and_act(step_description, query, context, observations)
+    
+    def _rule_based_reason_and_act(self, step_description: str, query: str, 
+                                   context: str, observations: List[Dict]) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        基于规则的推理和行动（后备方案）
+        
+        Returns:
+            (thought, action): 思考过程和要执行的动作
+        """
         step_lower = step_description.lower()
         
         # 思考: 分析当前步骤需要做什么
@@ -502,48 +577,23 @@ class PRRAgent:
         
         elif "提取" in step_lower or "获取" in step_lower:
             # 需要获取数据
-            if "区域" in step_lower or "大区" in step_lower:
-                thought += " -> 需要获取包含区域信息的数据"
-                # 尝试从观察中找到合适的工作表
-                doc_name, sheet_name = self._find_sheet_with_keyword(observations, ["区域", "大区", "销售"])
-                action = {
-                    "name": "get_sheet_data",
-                    "parameters": {
-                        "doc_name": doc_name,
-                        "sheet_name": sheet_name,
-                        "max_rows": 100
-                    }
+            thought += " -> 需要获取数据"
+            # 尝试从观察中找到合适的工作表
+            doc_name, sheet_name = self._find_sheet_with_context(observations)
+            action = {
+                "name": "get_sheet_data",
+                "parameters": {
+                    "doc_name": doc_name,
+                    "sheet_name": sheet_name,
+                    "max_rows": 100
                 }
-            elif "产品" in step_lower:
-                thought += " -> 需要获取产品相关数据"
-                doc_name, sheet_name = self._find_sheet_with_keyword(observations, ["产品"])
-                action = {
-                    "name": "get_sheet_data",
-                    "parameters": {
-                        "doc_name": doc_name,
-                        "sheet_name": sheet_name,
-                        "max_rows": 100
-                    }
-                }
-            else:
-                # 通用数据提取
-                doc_name = self._guess_doc_name()
-                sheet_name = self._guess_sheet_name()
-                thought += f" -> 从 {doc_name}/{sheet_name} 获取数据"
-                action = {
-                    "name": "get_sheet_data",
-                    "parameters": {
-                        "doc_name": doc_name,
-                        "sheet_name": sheet_name,
-                        "max_rows": 100
-                    }
-                }
+            }
         
         elif "计算" in step_lower or "汇总" in step_lower or "聚合" in step_lower:
             # 需要聚合数据
             thought += " -> 执行数据聚合"
             # 尝试从之前的观察中识别分组列
-            group_col = self._identify_group_column(observations, query)
+            group_col = self._identify_group_column_generic(observations)
             doc_name = self._guess_doc_name()
             sheet_name = self._guess_sheet_name()
             
@@ -562,7 +612,7 @@ class PRRAgent:
             thought += " -> 执行排序找出最优"
             doc_name = self._guess_doc_name()
             sheet_name = self._guess_sheet_name()
-            column = self._guess_metric_column(observations, query)
+            column = self._guess_metric_column_generic(observations)
             
             action = {
                 "name": "get_top_n",
@@ -644,6 +694,84 @@ class PRRAgent:
     def _generate_reflection(self, query: str, plan: List[str], 
                            observations: List[Dict], current_step: int) -> str:
         """生成反思"""
+        # 使用LLM生成反思（如果可用）
+        if self.llm:
+            return self._llm_generate_reflection(query, plan, observations, current_step)
+        else:
+            return self._rule_based_generate_reflection(query, plan, observations, current_step)
+    
+    def _llm_generate_reflection(self, query: str, plan: List[str], 
+                                observations: List[Dict], current_step: int) -> str:
+        """
+        使用LLM生成反思
+        
+        让LLM分析执行结果，判断：
+        1. 为什么失败了（如果失败）
+        2. 现有信息是否足以回答问题
+        3. 下一步应该怎么做
+        """
+        try:
+            if not observations:
+                return "还没有任何观察结果"
+            
+            last_obs = observations[-1]
+            result = last_obs.get("result", {})
+            
+            # 构建提示词
+            prompt_parts = [
+                "你是一个智能数据分析助手。请分析当前的执行结果，并进行反思。",
+                f"\n用户查询: {query}",
+                f"\n执行计划: {plan}",
+                f"\n当前步骤: {current_step + 1}/{len(plan)}",
+                f"\n刚刚执行的步骤: {last_obs.get('step_description', '')}",
+                f"\n执行结果:",
+            ]
+            
+            if result.get("success"):
+                prompt_parts.append(f"✓ 成功")
+                data = result.get("data", {})
+                if isinstance(data, dict):
+                    if "data" in data:
+                        prompt_parts.append(f"  获得了 {len(data.get('data', []))} 条数据记录")
+                    if "documents" in data:
+                        prompt_parts.append(f"  获得了文档摘要信息")
+                    if "statistics" in data:
+                        prompt_parts.append(f"  获得了统计信息")
+                prompt_parts.append(f"  数据摘要: {str(data)[:500]}")
+            else:
+                prompt_parts.append(f"✗ 失败")
+                prompt_parts.append(f"  错误: {result.get('error', '未知错误')}")
+            
+            # 添加历史观察摘要
+            if len(observations) > 1:
+                prompt_parts.append(f"\n之前已完成的步骤: {len(observations) - 1}")
+                successful_obs = [obs for obs in observations[:-1] if obs["result"].get("success", False)]
+                prompt_parts.append(f"  成功: {len(successful_obs)}, 失败: {len(observations) - 1 - len(successful_obs)}")
+            
+            prompt_parts.extend([
+                "\n请分析:",
+                "1. 如果执行失败，分析失败的原因是什么？",
+                "2. 目前收集的信息是否足够回答用户的问题？",
+                "3. 下一步应该继续执行计划、调整计划，还是可以直接生成答案？",
+                "\n请用简洁的中文回答（1-3句话），重点说明关键信息。"
+            ])
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # 调用LLM
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            reflection = response.content.strip()
+            
+            return reflection
+            
+        except Exception as e:
+            logger.error(f"LLM反思失败: {str(e)}")
+            # 降级到规则基础的方法
+            return self._rule_based_generate_reflection(query, plan, observations, current_step)
+    
+    def _rule_based_generate_reflection(self, query: str, plan: List[str], 
+                                       observations: List[Dict], current_step: int) -> str:
+        """基于规则的反思生成（后备方案）"""
         if not observations:
             return "还没有任何观察结果"
         
@@ -684,6 +812,103 @@ class PRRAgent:
     
     def _should_continue(self, state: PRRAgentState) -> str:
         """判断是否继续、重新规划或结束"""
+        # 使用LLM判断（如果可用）
+        if self.llm:
+            return self._llm_should_continue(state)
+        else:
+            return self._rule_based_should_continue(state)
+    
+    def _llm_should_continue(self, state: PRRAgentState) -> str:
+        """
+        使用LLM判断是否继续、重新规划或结束
+        
+        让LLM分析当前状态，决定下一步行动
+        """
+        try:
+            iteration = state.get("iteration", 0)
+            current_step = state.get("current_step", 0)
+            plan = state.get("plan", [])
+            needs_replan = state.get("needs_replan", False)
+            observations = state.get("observations", [])
+            reflections = state.get("reflections", [])
+            query = state.get("query", "")
+            
+            # 先检查硬性限制
+            if iteration >= self.max_iterations:
+                logger.info("Reached maximum iterations, finishing...")
+                return "finish"
+            
+            if current_step >= len(plan):
+                logger.info("All plan steps completed, finishing...")
+                return "finish"
+            
+            # 构建提示词让LLM判断
+            prompt_parts = [
+                "你是一个智能数据分析助手。请根据当前执行状态，决定下一步应该做什么。",
+                f"\n用户查询: {query}",
+                f"\n执行计划: {plan}",
+                f"\n当前步骤: {current_step}/{len(plan)}",
+                f"\n迭代次数: {iteration}/{self.max_iterations}",
+                f"\n总观察次数: {len(observations)}",
+            ]
+            
+            # 添加最近的反思
+            if reflections:
+                prompt_parts.append(f"\n最近的反思: {reflections[-1]}")
+            
+            # 添加观察摘要
+            if observations:
+                successful_obs = [obs for obs in observations if obs["result"].get("success", False)]
+                prompt_parts.append(f"\n成功的观察: {len(successful_obs)}/{len(observations)}")
+                
+                # 最近一次观察的状态
+                last_obs = observations[-1]
+                if last_obs["result"].get("success"):
+                    prompt_parts.append("最近一次执行: ✓ 成功")
+                else:
+                    prompt_parts.append(f"最近一次执行: ✗ 失败 ({last_obs['result'].get('error', '')})")
+            
+            if needs_replan:
+                prompt_parts.append("\n注意: 系统建议需要重新规划")
+            
+            prompt_parts.extend([
+                "\n请判断下一步应该:",
+                "1. continue - 继续执行计划中的下一步",
+                "2. replan - 重新规划（当前计划有问题或需要调整）",
+                "3. finish - 结束并生成答案（已有足够信息回答问题）",
+                "\n请只回答一个词: continue, replan 或 finish"
+            ])
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # 调用LLM
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            decision = response.content.strip().lower()
+            
+            # 解析决策 - 使用更精确的匹配
+            # 优先匹配完整的单词
+            if decision == "finish" or decision.startswith("finish"):
+                logger.info("LLM决定: 完成并生成答案")
+                return "finish"
+            elif decision == "replan" or decision.startswith("replan"):
+                if iteration < self.max_iterations - 2:
+                    logger.info("LLM决定: 重新规划")
+                    return "replan"
+                else:
+                    logger.info("LLM建议重新规划，但接近最大迭代次数，改为继续执行")
+                    return "continue"
+            else:
+                # 默认继续执行
+                logger.info("LLM决定: 继续执行")
+                return "continue"
+            
+        except Exception as e:
+            logger.error(f"LLM判断失败: {str(e)}")
+            # 降级到规则基础的方法
+            return self._rule_based_should_continue(state)
+    
+    def _rule_based_should_continue(self, state: PRRAgentState) -> str:
+        """基于规则的继续判断（后备方案）"""
         iteration = state.get("iteration", 0)
         current_step = state.get("current_step", 0)
         plan = state.get("plan", [])
@@ -926,77 +1151,98 @@ class PRRAgent:
         
         return "执行成功"
     
-    def _find_sheet_with_keyword(self, observations: List[Dict], keywords: List[str]) -> tuple[str, str]:
-        """从观察中找到包含关键词的工作表"""
+    def _get_available_tools_description(self) -> str:
+        """获取可用工具的描述"""
+        return """
+可用工具列表:
+1. get_document_summary - 获取所有文档和工作表的摘要信息
+   参数: {} (无参数)
+   
+2. get_sheet_data - 获取指定工作表的数据
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名", "max_rows": 最大行数}
+   
+3. aggregate_data - 对数据进行聚合计算
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名", "group_col": "分组列", "agg_func": "聚合函数(sum/mean/count)"}
+   
+4. get_top_n - 获取排名前N的数据
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名", "column": "排序列", "n": 数量, "ascending": false}
+   
+5. get_statistics - 获取数据的统计信息
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名"}
+   
+6. filter_data - 筛选数据
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名", "conditions": 筛选条件}
+   
+7. sort_data - 对数据排序
+   参数: {"doc_name": "文档名", "sheet_name": "工作表名", "column": "排序列", "ascending": true/false}
+"""
+    
+    def _format_observations_for_llm(self, observations: List[Dict]) -> str:
+        """格式化观察结果供LLM使用"""
+        if not observations:
+            return "无"
+        
+        formatted = []
+        for i, obs in enumerate(observations[-3:], 1):  # 只展示最近3条
+            step_desc = obs.get("step_description", "")
+            result = obs.get("result", {})
+            if result.get("success"):
+                summary = obs.get("summary", "执行成功")
+                formatted.append(f"{i}. {step_desc} -> ✓ {summary}")
+            else:
+                error = result.get("error", "未知错误")
+                formatted.append(f"{i}. {step_desc} -> ✗ {error}")
+        
+        return "\n".join(formatted)
+    
+    def _find_sheet_with_context(self, observations: List[Dict]) -> tuple[str, str]:
+        """
+        从观察中找到工作表（简化版本，返回第一个可用的工作表）
+        """
         # 查找文档摘要观察
         for obs in observations:
             result = obs.get("result", {})
             if result.get("success") and "documents" in result.get("data", {}):
                 docs = result["data"]["documents"]
-                # 遍历文档和工作表
-                for doc_name, doc_info in docs.items():
-                    # 尝试从sheets_summary中获取
-                    sheets = doc_info.get("sheets_summary", doc_info.get("sheets", {}))
-                    for sheet_name, sheet_info in sheets.items():
-                        # 检查列名 - 可能是column_names或columns
-                        columns = sheet_info.get("column_names", sheet_info.get("columns", []))
-                        # 检查是否有任何关键词匹配
-                        for keyword in keywords:
-                            if any(keyword in str(col) for col in columns):
-                                # 优先匹配更精确的关键词（如"大区"比"销售"更精确）
-                                if keyword in ['区域', '大区', '产品', '部门']:
-                                    # 这些是高优先级的分组关键词
-                                    return doc_name, sheet_name
-        
-        # 第二轮：如果没找到高优先级关键词，接受其他匹配
-        for obs in observations:
-            result = obs.get("result", {})
-            if result.get("success") and "documents" in result.get("data", {}):
-                docs = result["data"]["documents"]
+                # 返回第一个找到的文档和工作表
                 for doc_name, doc_info in docs.items():
                     sheets = doc_info.get("sheets_summary", doc_info.get("sheets", {}))
-                    for sheet_name, sheet_info in sheets.items():
-                        columns = sheet_info.get("column_names", sheet_info.get("columns", []))
-                        for keyword in keywords:
-                            if any(keyword in str(col) for col in columns):
-                                return doc_name, sheet_name
+                    if sheets:
+                        # 返回第一个工作表
+                        sheet_name = list(sheets.keys())[0]
+                        return doc_name, sheet_name
         
         # 如果没找到，返回默认值
         return self._guess_doc_name(), self._guess_sheet_name()
     
-    def _identify_group_column(self, observations: List[Dict], query: str) -> str:
-        """识别用于分组的列"""
-        # 从查询中提取
-        if "区域" in query or "大区" in query:
-            return "区域"
-        elif "产品" in query:
-            return "产品"
-        elif "部门" in query:
-            return "部门"
-        
+    def _identify_group_column_generic(self, observations: List[Dict]) -> str:
+        """识别用于分组的列（通用方法）"""
         # 从观察的数据中推断
         for obs in observations:
             result = obs.get("result", {})
             if result.get("success"):
                 data = result.get("data", {})
-                if isinstance(data, dict) and "columns" in data:
-                    columns = data["columns"]
-                    for col in columns:
-                        if any(keyword in str(col) for keyword in ["区域", "产品", "部门", "类别"]):
-                            return col
+                if isinstance(data, dict):
+                    # 尝试从columns获取
+                    if "columns" in data and data["columns"]:
+                        # 返回第一个看起来像分组列的列
+                        columns = data["columns"]
+                        for col in columns:
+                            col_str = str(col).lower()
+                            # 通用的分组列模式（不依赖硬编码的特定词）
+                            if any(pattern in col_str for pattern in ["名称", "类型", "类别", "分类"]):
+                                return col
+                        # 如果没找到模式匹配，返回第一个非数值型的列
+                        return columns[0]
+                    # 尝试从column_names获取
+                    elif "column_names" in data and data["column_names"]:
+                        return data["column_names"][0]
         
-        return "区域"  # 默认
+        # 默认返回一个通用名称
+        return "分组列"
     
-    def _guess_metric_column(self, observations: List[Dict], query: str) -> str:
-        """猜测度量列"""
-        # 从查询中提取
-        if "销售" in query:
-            return "销售额"
-        elif "利润" in query:
-            return "利润"
-        elif "收入" in query:
-            return "收入"
-        
+    def _guess_metric_column_generic(self, observations: List[Dict]) -> str:
+        """猜测度量列（通用方法）"""
         # 从数据中推断
         for obs in observations:
             result = obs.get("result", {})
@@ -1004,11 +1250,17 @@ class PRRAgent:
                 data = result.get("data", {})
                 if isinstance(data, dict) and "columns" in data:
                     columns = data["columns"]
+                    # 查找看起来像数值指标的列
                     for col in columns:
-                        if "销售" in str(col) or "金额" in str(col):
+                        col_str = str(col).lower()
+                        # 通用的指标列模式
+                        if any(pattern in col_str for pattern in ["额", "量", "率", "值", "数"]):
                             return col
+                    # 如果没找到，返回最后一列（通常是数值列）
+                    if columns:
+                        return columns[-1]
         
-        return "销售额"  # 默认
+        return "指标列"  # 默认
     
     def _guess_doc_name(self) -> str:
         """猜测文档名"""
