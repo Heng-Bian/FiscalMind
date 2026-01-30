@@ -529,8 +529,21 @@ class PRRAgent:
                 result_text = result_text[json_start:json_end].strip()
             
             result = json.loads(result_text)
-            thought = result.get("thought", f"当前步骤: {step_description}")
+            
+            # 验证响应结构
+            if not isinstance(result, dict):
+                logger.warning("LLM返回的不是字典结构，使用规则方法")
+                raise ValueError("Invalid response structure")
+            
+            thought = result.get("thought")
             action = result.get("action")
+            
+            # 验证必需字段
+            if not thought:
+                logger.warning("LLM响应缺少thought字段，使用默认值")
+                thought = f"当前步骤: {step_description}"
+            
+            # action可以为None，表示不需要执行工具
             
             return thought, action
             
@@ -566,7 +579,7 @@ class PRRAgent:
             # 需要获取数据
             thought += " -> 需要获取数据"
             # 尝试从观察中找到合适的工作表
-            doc_name, sheet_name = self._find_sheet_with_context(observations, step_description, query)
+            doc_name, sheet_name = self._find_sheet_with_context(observations)
             action = {
                 "name": "get_sheet_data",
                 "parameters": {
@@ -580,7 +593,7 @@ class PRRAgent:
             # 需要聚合数据
             thought += " -> 执行数据聚合"
             # 尝试从之前的观察中识别分组列
-            group_col = self._identify_group_column_generic(observations, query)
+            group_col = self._identify_group_column_generic(observations)
             doc_name = self._guess_doc_name()
             sheet_name = self._guess_sheet_name()
             
@@ -599,7 +612,7 @@ class PRRAgent:
             thought += " -> 执行排序找出最优"
             doc_name = self._guess_doc_name()
             sheet_name = self._guess_sheet_name()
-            column = self._guess_metric_column_generic(observations, query)
+            column = self._guess_metric_column_generic(observations)
             
             action = {
                 "name": "get_top_n",
@@ -872,14 +885,20 @@ class PRRAgent:
             response = self.llm.invoke([HumanMessage(content=prompt)])
             decision = response.content.strip().lower()
             
-            # 解析决策
-            if "finish" in decision:
+            # 解析决策 - 使用更精确的匹配
+            # 优先匹配完整的单词
+            if decision == "finish" or decision.startswith("finish"):
                 logger.info("LLM决定: 完成并生成答案")
                 return "finish"
-            elif "replan" in decision and iteration < self.max_iterations - 2:
-                logger.info("LLM决定: 重新规划")
-                return "replan"
+            elif decision == "replan" or decision.startswith("replan"):
+                if iteration < self.max_iterations - 2:
+                    logger.info("LLM决定: 重新规划")
+                    return "replan"
+                else:
+                    logger.info("LLM建议重新规划，但接近最大迭代次数，改为继续执行")
+                    return "continue"
             else:
+                # 默认继续执行
                 logger.info("LLM决定: 继续执行")
                 return "continue"
             
@@ -1176,10 +1195,9 @@ class PRRAgent:
         
         return "\n".join(formatted)
     
-    def _find_sheet_with_context(self, observations: List[Dict], 
-                                 step_description: str, query: str) -> tuple[str, str]:
+    def _find_sheet_with_context(self, observations: List[Dict]) -> tuple[str, str]:
         """
-        从观察中找到最相关的工作表（通用方法，不依赖硬编码关键词）
+        从观察中找到工作表（简化版本，返回第一个可用的工作表）
         """
         # 查找文档摘要观察
         for obs in observations:
@@ -1197,7 +1215,7 @@ class PRRAgent:
         # 如果没找到，返回默认值
         return self._guess_doc_name(), self._guess_sheet_name()
     
-    def _identify_group_column_generic(self, observations: List[Dict], query: str) -> str:
+    def _identify_group_column_generic(self, observations: List[Dict]) -> str:
         """识别用于分组的列（通用方法）"""
         # 从观察的数据中推断
         for obs in observations:
@@ -1223,7 +1241,7 @@ class PRRAgent:
         # 默认返回一个通用名称
         return "分组列"
     
-    def _guess_metric_column_generic(self, observations: List[Dict], query: str) -> str:
+    def _guess_metric_column_generic(self, observations: List[Dict]) -> str:
         """猜测度量列（通用方法）"""
         # 从数据中推断
         for obs in observations:
